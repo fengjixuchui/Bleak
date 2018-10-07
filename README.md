@@ -5,13 +5,14 @@ A DLL injection library written in C# that supports several methods of process i
 ## Supported Methods
 
 * CreateRemoteThread
+* QueueUserAPC
 * SetThreadContext (Thread Hijack)
 
 ## Installation
 
 * Clone this repository
-* Compile as x86 or x64
-* Add a reference to Simple Injection.dll to your project
+* Compile the project as AnyCPU
+* Add a reference to Simple-Injection.dll to your project
 
 ## Usage
 
