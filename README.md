@@ -6,7 +6,13 @@ A DLL injection library written in C# that supports several methods of process i
 
 * CreateRemoteThread
 * QueueUserAPC
+* RtlCreateUserThread
 * SetThreadContext (Thread Hijack)
+
+## Features
+
+* Erase PE Headers
+* Randomise PE Headers
 
 ## Installation
 
@@ -22,6 +28,8 @@ using Simple_Injection;
 var injector = new Injector();
 
 injector.CreateRemoteThread("pathToDll", "processName");
+
+injector.EraseHeaders("pathToDll", "processName")
 ```
 
 ## Contributing

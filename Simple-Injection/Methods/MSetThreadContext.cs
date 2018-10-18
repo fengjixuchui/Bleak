@@ -90,6 +90,10 @@ namespace Simple_Injection.Methods
             
             var compiledAsx64 = Environment.Is64BitProcess;
             
+            // Cache an instance of the specified process
+
+            var process = Process.GetProcessesByName(processName)[0];
+            
             // Get the pointer to load library
 
             var loadLibraryPointer = GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryA");
@@ -98,13 +102,11 @@ namespace Simple_Injection.Methods
             {
                 return false;
             }
-            
+
             // Get the handle of the specified process
-            
-            var processId = Process.GetProcessesByName(processName)[0].Id;
-            
-            var processHandle = OpenProcess(ProcessPrivileges.AllAccess, false, processId);
-            
+
+            var processHandle = process.Handle;
+
             if (processHandle == IntPtr.Zero)
             {
                 return false;
@@ -138,9 +140,14 @@ namespace Simple_Injection.Methods
             
             // Get the handle of the first thread of the specified process
             
-            var threadId = Process.GetProcessesByName(processName)[0].Threads[0].Id;
+            var threadId = process.Threads[0].Id;
 
             var threadHandle = OpenThread(ThreadAccess.AllAccess, false, (uint) threadId);
+
+            if (threadHandle == IntPtr.Zero)
+            {
+                return false;
+            }
             
             // Suspend the thread
 
@@ -171,9 +178,8 @@ namespace Simple_Injection.Methods
             VirtualFreeEx(processHandle, dllMemoryPointer, dllNameSize, MemoryAllocation.Release);
             VirtualFreeEx(processHandle, shellcodeMemoryPointer, shellcodeSize, MemoryAllocation.Release);
             
-            // Close the previously opened handles
+            // Close the previously opened handle
             
-            CloseHandle(processHandle);
             CloseHandle(threadHandle);
             
             return true;

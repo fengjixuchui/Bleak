@@ -1,12 +1,11 @@
 using System;
 using System.Diagnostics;
-using System.Linq;
 using System.Text;
 using static Simple_Injection.Etc.Native;
 
 namespace Simple_Injection.Methods
 {
-    public static class MQueueUserAPC
+    public static class MRtlCreateUserThread
     {
         public static bool Inject(string dllPath, string processName)
         {
@@ -47,31 +46,29 @@ namespace Simple_Injection.Methods
             {
                 return false;
             }
-
-            // Call QueueUserAPC on each thread
             
-            foreach (var thread in Process.GetProcessesByName(processName)[0].Threads.Cast<ProcessThread>())
+            // Create a user thread to call load library in the specified process
+            
+            var userThreadHandle = RtlCreateUserThread(processHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, loadLibraryPointer ,dllMemoryPointer, IntPtr.Zero, IntPtr.Zero);
+            
+            if (userThreadHandle == IntPtr.Zero)
             {
-                var threadId = thread.Id;
-                
-                // Get the threads handle
-                
-                var threadHandle = OpenThread(ThreadAccess.SetContext, false, (uint) threadId);
-
-                // Add a user-mode APC to the APC queue of the thread
-                
-                QueueUserAPC(loadLibraryPointer, threadHandle, dllMemoryPointer);
-                
-                // Close the handle to the thread
-                
-                CloseHandle(threadHandle);
+                return false;
             }
+            
+            // Wait for the user thread to finish
+            
+            WaitForSingleObject(userThreadHandle, 0xFFFFFFFF);
             
             // Free the previously allocated memory
             
             VirtualFreeEx(processHandle, dllMemoryPointer, dllNameSize, MemoryAllocation.Release);
             
+            // Close the previously opened handle
+
+            CloseHandle(userThreadHandle);
+            
             return true;
-        }  
+        }
     }
 }
