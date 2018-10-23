@@ -1,4 +1,5 @@
 ﻿using Simple_Injection.Methods;
+using Simple_Injection.Extensions;
 
 namespace Simple_Injection
 {
@@ -22,6 +23,16 @@ namespace Simple_Injection
         public bool SetThreadContext(string dllPath, string processName)
         {
             return MSetThreadContext.Inject(dllPath, processName);
+        }
+
+        public bool EraseHeaders(string dllPath, string processName)
+        {
+            return MEraseHeaders.Erase(dllPath, processName);
+        }
+
+        public bool RandomiseHeaders(string dllPath, string processName)
+        {
+            return MRandomiseHeaders.Randomise(dllPath, processName);
         }
     }
 }

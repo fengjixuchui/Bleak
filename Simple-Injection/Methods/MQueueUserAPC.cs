@@ -3,16 +3,38 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using static Simple_Injection.Etc.Native;
+using static Simple_Injection.Etc.Wrapper;
 
 namespace Simple_Injection.Methods
 {
-    public static class MQueueUserAPC
+    internal static class MQueueUserAPC
     {
-        public static bool Inject(string dllPath, string processName)
+        internal static bool Inject(string dllPath, string processName)
         {
+            // Ensure both arguments passed in are valid
+            
+            if (string.IsNullOrEmpty(dllPath) || string.IsNullOrEmpty(processName))
+            {
+                return false;
+            }
+            
+            // Cache an instance of the specified process
+
+            Process process;
+            
+            try
+            {
+                process = Process.GetProcessesByName(processName)[0];
+            }
+
+            catch (IndexOutOfRangeException)
+            {
+                return false;
+            }
+            
             // Get the pointer to load library
 
-            var loadLibraryPointer = GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryA");
+            var loadLibraryPointer = GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryW");
 
             if (loadLibraryPointer == IntPtr.Zero)
             {
@@ -21,9 +43,9 @@ namespace Simple_Injection.Methods
 
             // Get the handle of the specified process
 
-            var processHandle = Process.GetProcessesByName(processName)[0].Handle;
+            var processHandle = process.SafeHandle;
 
-            if (processHandle == IntPtr.Zero)
+            if (processHandle == null)
             {
                 return false;
             }
@@ -32,7 +54,7 @@ namespace Simple_Injection.Methods
 
             var dllNameSize = dllPath.Length + 1;
 
-            var dllMemoryPointer = VirtualAllocEx(processHandle, IntPtr.Zero, (uint) dllNameSize, MemoryAllocation.AllAccess, MemoryProtection.PageReadWrite);
+            var dllMemoryPointer = VirtualAllocEx(processHandle, IntPtr.Zero, dllNameSize, MemoryAllocation.AllAccess, MemoryProtection.PageExecuteReadWrite);
 
             if (dllMemoryPointer == IntPtr.Zero)
             {
@@ -41,9 +63,9 @@ namespace Simple_Injection.Methods
             
             // Write the dll name into memory
 
-            var dllBytes = Encoding.Default.GetBytes(dllPath);
+            var dllBytes = Encoding.Unicode.GetBytes(dllPath + "\0");
 
-            if (!WriteProcessMemory(processHandle, dllMemoryPointer, dllBytes, (uint) dllNameSize, 0))
+            if (!WriteMemory(processHandle, dllMemoryPointer, dllBytes))
             {
                 return false;
             }
@@ -56,7 +78,7 @@ namespace Simple_Injection.Methods
                 
                 // Get the threads handle
                 
-                var threadHandle = OpenThread(ThreadAccess.SetContext, false, (uint) threadId);
+                var threadHandle = OpenThread(ThreadAccess.AllAccess, false, threadId);
 
                 // Add a user-mode APC to the APC queue of the thread
                 
