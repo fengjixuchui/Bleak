@@ -11,7 +11,7 @@ using static Simple_Injection.Etc.Wrapper;
 
 namespace Simple_Injection.Methods
 {
-    public static class MManualMap
+    public static class ManualMap
     {   
         internal static bool Inject(string dllPath, string processName)
         {
@@ -71,7 +71,7 @@ namespace Simple_Injection.Methods
             
             // Allocate memory in process
 
-            var remoteAddress = VirtualAllocEx(processHandle, IntPtr.Zero, (int) peHeaders.ImageNtHeaders.OptionalHeader.SizeOfImage, MemoryAllocation.AllAccess, MemoryProtection.PageExecuteReadWrite);
+            var remoteAddress = VirtualAllocEx(processHandle, IntPtr.Zero, (int) peHeaders.ImageNtHeaders.OptionalHeader.SizeOfImage, MemoryAllocation.Commit | MemoryAllocation.Reserve, MemoryProtection.PageExecuteReadWrite);
             
             // Map the imports
 
@@ -175,7 +175,7 @@ namespace Simple_Injection.Methods
             
             // Allocate memory in process
 
-            var remoteAddress = VirtualAllocEx(processHandle, IntPtr.Zero, (int) peHeaders.ImageNtHeaders.OptionalHeader.SizeOfImage, MemoryAllocation.AllAccess, MemoryProtection.PageExecuteReadWrite);
+            var remoteAddress = VirtualAllocEx(processHandle, IntPtr.Zero, (int) peHeaders.ImageNtHeaders.OptionalHeader.SizeOfImage, MemoryAllocation.Commit | MemoryAllocation.Reserve, MemoryProtection.PageExecuteReadWrite);
             
             // Map the imports
 
@@ -225,11 +225,11 @@ namespace Simple_Injection.Methods
         {
             // Create the dll path
             
-            var dllPath = @"C:\Windows\System32\" + dllName.ToLower();
+            var dllPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), dllName.ToLower());
 
             // Load the dll into the host process
             
-            MRtlCreateUserThread.Inject(dllPath, Process.GetCurrentProcess().Id);
+            RtlCreateUserThread.Inject(dllPath, Process.GetCurrentProcess().Id);
         }
         
         private static IntPtr RvaToVa(IntPtr baseAddress, int eLfanew, IntPtr rva)
@@ -544,17 +544,15 @@ namespace Simple_Injection.Methods
 
         private static bool CallEntryPoint(SafeHandle processHandle, IntPtr baseAddress, IntPtr entryPoint)
         {
-            var shellcode = CallDllMainx86(baseAddress, entryPoint);
-            
             // Create shellcode to call the entry point
-            
-            //var shellcode = CallDllMainx86(baseAddress, entryPoint);
-            
+
+            var shellcode = CallDllMainx86(baseAddress, entryPoint);
+                        
             // Allocate memory for the shellcode
             
             var shellcodeSize = shellcode.Length;
 
-            var shellcodeMemoryPointer = VirtualAllocEx(processHandle, IntPtr.Zero, shellcodeSize, MemoryAllocation.AllAccess, MemoryProtection.PageExecuteReadWrite);
+            var shellcodeMemoryPointer = VirtualAllocEx(processHandle, IntPtr.Zero, shellcodeSize, MemoryAllocation.Commit | MemoryAllocation.Reserve, MemoryProtection.PageExecuteReadWrite);
 
             if (shellcodeMemoryPointer == IntPtr.Zero)
             {

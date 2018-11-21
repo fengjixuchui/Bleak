@@ -71,9 +71,6 @@ namespace Simple_Injection.Etc
         [DllImport("user32.dll")]
         internal static extern void PostMessage(IntPtr hWnd, WindowsMessage dwMsg, IntPtr wParam, IntPtr lParam);
 
-        [DllImport("kernel32.dll")]
-        public static extern bool ReadProcessMemory(SafeHandle hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, int lpNumberOfBytesRead);
-        
         [DllImport("dbghelp.dll")]
         public static extern IntPtr ImageRvaToVa(IntPtr ntHeaders, IntPtr Base, IntPtr rva, IntPtr lastRvaSection);
         
@@ -81,35 +78,44 @@ namespace Simple_Injection.Etc
         
         #region Permissions
         
+        [Flags]
         internal enum MemoryAllocation
         {
-            AllAccess = 0x3000,
+            Commit = 0x1000,
+            Reserve = 0x2000,
             Release = 0x8000
         }
-
+        
+        [Flags]
         internal enum MemoryProtection
         {
             PageExecuteReadWrite = 0x40
         }
 
+        [Flags]
         internal enum ThreadAccess
         {
-            AllAccess = 0x1A
+            SuspendResume = 0x2,
+            GetContext = 0x8,
+            SetContext = 0x10
         }
 
+        [Flags]
         internal enum ContextFlags
         {
             ContextControl = 0x10001
         }
 
+        [Flags]
         internal enum WindowsMessage
         {
             WmKeydown = 0x100
         }
 
+        [Flags]
         internal enum DataSectionFlags : uint
         {
-            MemoryNotCached = 0x04000000,
+            MemoryNotCached = 0x4000000,
             MemoryExecute = 0x20000000,
             MemoryRead = 0x40000000,
             MemoryWrite = 0x80000000
