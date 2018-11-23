@@ -17,10 +17,7 @@ A native DLL injection library written in C# that supports several methods of in
 
 ## Installation
 
-* Clone this repository
-* Compile the project as AnyCPU
-* Add a reference to Simple-Injection.dll to your project
-* Add a reference to PeNet.dll to your project
+* Download and install Simple-Injection using [NuGet](https://www.nuget.org/packages/Simple-Injection/1.0.0)
 
 ## Usage
 
@@ -41,4 +38,4 @@ injector.EraseHeaders("pathToDll", "processName")
 ## Contributing
 Pull requests are welcome. 
 
-For major changes, such as new injection methods, please open an issue first to discuss what you would like to add.
+For large changes, please open an issue first to discuss what you would like to add.
