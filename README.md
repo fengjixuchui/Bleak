@@ -14,12 +14,13 @@ A Windows native DLL injection library written in C# that supports several metho
 
 ## Features
 
+* Eject DLL
 * Erase PE Headers
 * Randomise PE Headers
 
 ## Installation
 
-* Download and install Bleak using [NuGet](https://www.nuget.org/packages/Bleak/1.0.0)
+* Download and install Bleak using [NuGet](https://www.nuget.org/packages/Bleak)
 
 ## Usage
 
@@ -34,7 +35,7 @@ injector.CreateRemoteThread("pathToDll", "processName");
 
 // Erase the PE Headers
 
-injector.EraseHeaders("pathToDll", "processName")
+injector.EraseHeaders("pathToDll", "processName");
 ```
 
 ## Contributing
