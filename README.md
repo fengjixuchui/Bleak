@@ -7,7 +7,7 @@ A Windows native DLL injection library written in C# that supports several metho
 ## Supported Methods
 
 * CreateRemoteThread
-* ManualMap (x86 only)
+* ManualMap
 * NtCreateThreadEx
 * QueueUserAPC
 * RtlCreateUserThread
@@ -25,6 +25,8 @@ A Windows native DLL injection library written in C# that supports several metho
 * Download and install Bleak using [NuGet](https://www.nuget.org/packages/Bleak)
 
 ## Usage
+
+All methods (including features) can be overloaded with a process id instead of a process name
 
 ```csharp
 using Bleak;
