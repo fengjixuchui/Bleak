@@ -1,6 +1,6 @@
 # Bleak 
 
-[![Build status](https://ci.appveyor.com/api/projects/status/t66asll5upc51rxg?svg=true)](https://ci.appveyor.com/project/Akaion/bleak)
+[![Build status](https://ci.appveyor.com/api/projects/status/f19i6yj053atkn4h?svg=true)](https://ci.appveyor.com/project/Akaion/bleak)
 
 A Windows native DLL injection library written in C# that supports several methods of injection.
 
@@ -14,7 +14,7 @@ A Windows native DLL injection library written in C# that supports several metho
 * SetThreadContext (Thread Hijack)
 * ZwCreateThreadEx
 
-## Features
+## Extensions
 
 * Eject DLL
 * Erase PE Headers
@@ -26,7 +26,7 @@ A Windows native DLL injection library written in C# that supports several metho
 
 ## Usage
 
-All methods (including features) can be overloaded with a process id instead of a process name
+You can also overload any method with a process id instead of a process name
 
 ```csharp
 using Bleak;
