@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 
 namespace Bleak.Native
@@ -28,13 +28,12 @@ namespace Bleak.Native
             private readonly uint Flags;
 
             internal readonly uint NameOffset;
-
-            private readonly uint NameLength;
+            internal readonly uint NameLength;
 
             private readonly uint HashedLength;
 
             internal readonly uint ValueOffset;
-            
+
             private readonly uint ValueCount;
         }
 
@@ -48,14 +47,6 @@ namespace Bleak.Native
 
             internal readonly uint ValueOffset;
             internal readonly uint ValueCount;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct ClientId
-        {
-            internal IntPtr UniqueProcess;
-
-            internal IntPtr UniqueThread;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -92,7 +83,9 @@ namespace Bleak.Native
             private readonly ulong Rcx;
             private readonly ulong Rdx;
             private readonly ulong Rbx;
-            private readonly ulong Rsp;
+
+            internal ulong Rsp;
+
             private readonly ulong Rbp;
             private readonly ulong Rsi;
             private readonly ulong Rdi;
@@ -369,14 +362,14 @@ namespace Bleak.Native
         internal struct ImageSectionHeader
         {
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-            internal readonly byte[] Name;
+            private readonly byte[] Name;
 
             internal readonly uint VirtualSize;
             internal readonly uint VirtualAddress;
 
             internal readonly uint SizeOfRawData;
-
             internal readonly uint PointerToRawData;
+
             private readonly uint PointerToRelocations;
             private readonly uint PointerToLineNumbers;
 
@@ -387,7 +380,7 @@ namespace Bleak.Native
         }
 
         [StructLayout(LayoutKind.Explicit)]
-        internal struct ImageThunkData
+        internal struct ImageThunkData32
         {
             [FieldOffset(0)]
             private readonly uint ForwarderString;
@@ -396,10 +389,26 @@ namespace Bleak.Native
             private readonly uint Function;
 
             [FieldOffset(0)]
-            private readonly uint Ordinal;
+            internal readonly uint Ordinal;
 
             [FieldOffset(0)]
             internal readonly uint AddressOfData;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        internal struct ImageThunkData64
+        {
+            [FieldOffset(0)]
+            private readonly ulong ForwarderString;
+
+            [FieldOffset(0)]
+            private readonly ulong Function;
+
+            [FieldOffset(0)]
+            internal readonly ulong Ordinal;
+
+            [FieldOffset(0)]
+            internal readonly ulong AddressOfData;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -446,7 +455,6 @@ namespace Bleak.Native
             private readonly uint SizeOfImage;
 
             internal UnicodeString32 FullDllName;
-
             internal UnicodeString32 BaseDllName;
 
             private readonly uint Flags;
@@ -456,12 +464,6 @@ namespace Bleak.Native
             private readonly ushort TlsIndex;
 
             internal readonly ListEntry32 HashLinks;
-
-            private readonly ulong TimeDateStamp;
-
-            private readonly ulong EntryPointActivationContext;
-
-            private readonly ulong Lock;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -478,7 +480,6 @@ namespace Bleak.Native
             private readonly ulong SizeOfImage;
 
             internal UnicodeString64 FullDllName;
-
             internal UnicodeString64 BaseDllName;
 
             private readonly uint Flags;
@@ -487,13 +488,7 @@ namespace Bleak.Native
 
             private readonly ushort TlsIndex;
 
-            internal ListEntry64 HashLinks;
-
-            private readonly ulong TimeDateStamp;
-
-            private readonly ulong EntryPointActivationContext;
-
-            private readonly ulong Lock;
+            internal readonly ListEntry64 HashLinks;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -518,134 +513,139 @@ namespace Bleak.Native
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        internal struct MemoryBasicInformation
+        internal struct OsVersionInfo
         {
-            private readonly IntPtr BaseAddress;
+            private readonly uint OsVersionInfoSize;
 
-            private readonly IntPtr AllocationBase;
-            private readonly Enumerations.MemoryProtectionType AllocationProtect;
+            internal readonly uint MajorVersion;
+            internal readonly uint MinorVersion;
 
-            internal readonly IntPtr RegionSize;
+            private readonly uint BuildNumber;
 
-            private readonly uint State;
-            private readonly Enumerations.MemoryProtectionType Protect;
-            private readonly uint Type;
-        }
+            private readonly uint PlatformId;
 
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct ObjectAttributes
-        {
-            private readonly ulong Length;
-
-            private readonly IntPtr RootDirectory;
-
-            private readonly IntPtr ObjectName;
-
-            private readonly ulong Attributes;
-
-            private readonly IntPtr SecurityDescriptor;
-
-            private readonly IntPtr SecurityQualityOfService;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            private readonly string CSDVersion;
         }
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct Peb32
         {
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
-            private readonly byte[] Reserved1;
+            private readonly byte InheritedAddressSpace;
+
+            private readonly byte ReadImageFileExecOptions;
 
             private readonly byte BeingDebugged;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)]
-            private readonly byte[] Reserved2;
+            private readonly byte BitField;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
-            private readonly uint[] Reserved3;
+            private readonly uint Mutant;
+
+            private readonly uint ImageBaseAddress;
 
             internal readonly uint Ldr;
 
             private readonly uint ProcessParameters;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
-            private readonly uint[] Reserved4;
+            private readonly uint SubSystemData;
 
-            private readonly uint AtlThunkSListPtr;
+            private readonly uint ProcessHeap;
 
-            private readonly uint Reserved5;
-            private readonly ulong Reserved6;
-            private readonly uint Reserved7;
-            private readonly ulong Reserved8;
+            private readonly uint FastPebLock;
 
-            private readonly ulong AtlThunkSListPtr32;
+            private readonly uint AltThunkSListPtr;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 45)]
-            private readonly uint[] Reserved9;
+            private readonly uint IFEOKey;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 96)]
-            private readonly byte[] Reserved10;
+            private readonly uint CrossProcessFlags;
 
-            private readonly uint PostProcessInitRoutine;
+            private readonly uint KernelCallbackTable;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128)]
-            private readonly byte[] Reserved11;
+            private readonly uint SystemReserved;
 
-            private readonly uint Reserved12;
+            private readonly uint AtlThunkSListPtr32;
 
-            private readonly ulong SessionId;
+            internal readonly uint ApiSetMap;
         }
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct Peb64
         {
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
-            private readonly byte[] Reserved1;
+            private readonly byte InheritedAddressSpace;
+
+            private readonly byte ReadImageFileExecOptions;
 
             private readonly byte BeingDebugged;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 21)]
-            private readonly byte[] Reserved2;
+            private readonly byte BitField;
+
+            private readonly ulong Mutant;
+
+            private readonly ulong ImageBaseAddress;
 
             internal readonly ulong Ldr;
 
             private readonly ulong ProcessParameters;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 520)]
-            private readonly byte[] Reserved3;
+            private readonly ulong SubSystemData;
 
-            private readonly ulong PostProcessInitRoutine;
+            private readonly ulong ProcessHeap;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 136)]
-            private readonly byte[] Reserved4;
+            private readonly ulong FastPebLock;
 
-            private readonly ulong SessionId;
+            private readonly ulong AltThunkSListPtr;
+
+            private readonly ulong IFEOKey;
+
+            private readonly uint CrossProcessFlags;
+
+            private readonly ulong KernelCallbackTable;
+
+            private readonly uint SystemReserved;
+
+            private readonly uint AtlThunkSListPtr32;
+
+            internal readonly ulong ApiSetMap;
         }
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct PebLdrData32
         {
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-            private readonly byte[] Reserved1;
+            private readonly uint Length;
 
-            private readonly uint Reserved2;
+            private readonly byte Initialized;
+
+            private readonly uint SsHandle;
 
             internal readonly ListEntry32 InLoadOrderModuleList;
 
             private readonly ListEntry32 InMemoryOrderModuleList;
             private readonly ListEntry32 InInitOrderModuleList;
+
+            private readonly uint EntryInProgress;
+
+            private readonly byte ShutdownInProgress;
+            private readonly uint ShutdownThreadId;
         }
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct PebLdrData64
         {
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-            private readonly byte[] Reserved1;
+            private readonly uint Length;
 
-            private readonly ulong Reserved2;
+            private readonly byte Initialized;
+
+            private readonly ulong SsHandle;
 
             internal readonly ListEntry64 InLoadOrderModuleList;
 
             private readonly ListEntry64 InMemoryOrderModuleList;
             private readonly ListEntry64 InInitOrderModuleList;
+
+            private readonly ulong EntryInProgress;
+
+            private readonly byte ShutdownInProgress;
+            private readonly ulong ShutdownThreadId;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -700,20 +700,36 @@ namespace Bleak.Native
         internal struct UnicodeString32
         {
             internal readonly ushort Length;
-
             internal readonly ushort MaximumLength;
 
-            internal readonly uint Buffer;
+            internal uint Buffer;
+
+            internal UnicodeString32(string @string)
+            {
+                Length = (ushort) (@string.Length * 2);
+
+                MaximumLength = (ushort) (Length + 2);
+
+                Buffer = 0;
+            }
         }
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct UnicodeString64
         {
             internal readonly ushort Length;
-
             internal readonly ushort MaximumLength;
 
-            internal readonly ulong Buffer;
+            internal ulong Buffer;
+
+            internal UnicodeString64(string @string)
+            {
+                Length = (ushort) (@string.Length * 2);
+
+                MaximumLength = (ushort) (Length + 2);
+
+                Buffer = 0;
+            }
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -750,7 +766,7 @@ namespace Bleak.Native
 
             private readonly uint EFlags;
 
-            private readonly uint Esp;
+            internal uint Esp;
 
             private readonly uint SegSs;
 

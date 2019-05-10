@@ -1,6 +1,6 @@
-﻿using Bleak.Handlers;
-using Microsoft.Win32.SafeHandles;
 using System;
+using Bleak.Handlers;
+using Microsoft.Win32.SafeHandles;
 
 namespace Bleak.Native.SafeHandle
 {
@@ -22,7 +22,7 @@ namespace Bleak.Native.SafeHandle
 
             if (!PInvoke.CloseHandle(handle))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to close a handle to a thread in the target process");
+                ExceptionHandler.ThrowWin32Exception("Failed to close a handle to a thread in the process");
             }
 
             return true;

@@ -1,20 +1,24 @@
-﻿namespace Bleak.PortableExecutable.Objects
+namespace Bleak.PortableExecutable.Objects
 {
     internal class ImportedFunction
     {
-        internal readonly string DllName;
+        internal string Dll;
 
         internal readonly string Name;
 
         internal readonly ulong Offset;
 
-        internal ImportedFunction(string dllName, string name, ulong offset)
+        internal readonly ushort? Ordinal;
+
+        internal ImportedFunction(string dll, string name, ulong offset, ushort? ordinal)
         {
-            DllName = dllName;
+            Dll = dll;
 
             Name = name;
 
             Offset = offset;
+
+            Ordinal = ordinal;
         }
     }
 }

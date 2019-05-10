@@ -1,40 +1,48 @@
-﻿using Bleak.Injection.Interfaces;
-using Bleak.Injection.Objects;
-using Bleak.Native;
-using Bleak.Native.SafeHandle;
-using Bleak.RemoteProcess.Objects;
-using Bleak.Syscall.Definitions;
 using System;
-using System.IO;
+using Bleak.Injection.Objects;
+using Bleak.Injection.Tools;
+using Bleak.Native;
+using Bleak.Shared;
 
 namespace Bleak.Injection.Extensions
 {
-    internal class EjectDll : IInjectionExtension
+    internal class EjectDll
     {
-        public bool Call(InjectionProperties injectionProperties)
+        private readonly InjectionTools _injectionTools;
+
+        private readonly InjectionWrapper _injectionWrapper;
+
+        internal EjectDll(InjectionWrapper injectionWrapper)
         {
-            // Get the address of FreeLibraryAndExitThread function in the target process
+            _injectionTools = new InjectionTools(injectionWrapper);
 
-            var freeLibraryAndExitThreadAddress = injectionProperties.RemoteProcess.GetFunctionAddress("kernel32.dll", "FreeLibraryAndExitThread");
+            _injectionWrapper = injectionWrapper;
+        }
 
-            // Look for the DLL in the module list of the target process
-
-            var dllName = Path.GetFileName(injectionProperties.DllPath);
-
-            var module = injectionProperties.RemoteProcess.Modules.Find(m => m.Name == dllName);
-            
-            if (module.Equals(default(ModuleInstance)))
+        internal bool Call(IntPtr dllAddress)
+        {
+            if (_injectionWrapper.InjectionMethod == InjectionMethod.ManualMap)
             {
-                throw new ArgumentException($"No DLL with the name {dllName} was found in the target processes module list");
+                // Get the entry point of the DLL
+
+                var dllEntryPointAddress = _injectionWrapper.RemoteProcess.IsWow64
+                                         ? dllAddress.AddOffset(_injectionWrapper.PeParser.GetPeHeaders().NtHeaders32.OptionalHeader.AddressOfEntryPoint)
+                                         : dllAddress.AddOffset(_injectionWrapper.PeParser.GetPeHeaders().NtHeaders64.OptionalHeader.AddressOfEntryPoint);
+
+                // Call the entry point of the DLL with DllProcessDetach in the remote process
+
+                _injectionTools.CallRemoteFunction(dllEntryPointAddress, (ulong) dllAddress, Constants.DllProcessDetach, 0);
+
+                // Free the memory region of the DLL in the remote process
+
+                _injectionWrapper.MemoryManager.FreeVirtualMemory(dllAddress);
+
+                return true;
             }
 
-            // Create a thread to call FreeLibraryAndExitThread in the target process
+            // Call FreeLibrary in the remote process
 
-            var remoteThreadHandle = (SafeThreadHandle) injectionProperties.SyscallManager.InvokeSyscall<NtCreateThreadEx>(injectionProperties.RemoteProcess.Handle, freeLibraryAndExitThreadAddress, module.BaseAddress);
-
-            PInvoke.WaitForSingleObject(remoteThreadHandle, uint.MaxValue);
-
-            remoteThreadHandle.Dispose();
+            _injectionTools.CallRemoteFunction("kernel32.dll", "FreeLibrary", (ulong) dllAddress);
 
             return true;
         }

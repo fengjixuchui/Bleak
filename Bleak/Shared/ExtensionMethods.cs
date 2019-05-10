@@ -1,6 +1,6 @@
-﻿using System;
+using System;
 
-namespace Bleak.Tools
+namespace Bleak.Shared
 {
     internal static class ExtensionMethods
     {

@@ -1,19 +1,19 @@
-﻿using Bleak.Injection.Objects;
-using Bleak.Native;
 using System;
 using System.Runtime.InteropServices;
+using Bleak.Injection.Objects;
+using Bleak.Native;
 
 namespace Bleak.Handlers
 {
     internal static class ValidationHandler
     {
-        internal static void ValidateDllArchitecture(InjectionProperties injectionProperties)
+        internal static void ValidateDllArchitecture(InjectionWrapper injectionProperties)
         {
-            // Ensure the architecture of the target process matches the architecture of the DLL
+            // Ensure the architecture of the remote process matches the architecture of the DLL
 
             if (injectionProperties.RemoteProcess.IsWow64 != (injectionProperties.PeParser.GetArchitecture() == Enumerations.MachineType.X86))
             {
-                throw new ApplicationException("The architecture of the target process did not match the architecture of the DLL");
+                throw new ApplicationException("The architecture of the remote process did not match the architecture of the DLL");
             }
 
             // Ensure that x64 injection is not being attempted from an x86 build
@@ -38,7 +38,7 @@ namespace Bleak.Handlers
 
             if (!Environment.Is64BitOperatingSystem)
             {
-                throw new PlatformNotSupportedException("This library is intended for 64 bit Windows use only and will not work on 32 bit versions of Windows");
+                throw new PlatformNotSupportedException("This library is intended for 64 bit Windows use only and will not work on 32 bit versions");
             }
         }
     }

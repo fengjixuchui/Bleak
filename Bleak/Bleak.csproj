@@ -1,13 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
-    <Version>2.3.0</Version>
-    <Authors>Akaion</Authors>
-    <Description>A Windows native DLL injection library written in C# that supports several methods of injection.</Description>
-    <RepositoryType>git</RepositoryType>
-    <RepositoryUrl>https://github.com/Akaion/Bleak</RepositoryUrl>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <Authors>Akaion</Authors>
+        <Description>A Windows native DLL injection library written in C# that supports several methods of injection.</Description>
+        <RepositoryUrl>https://github.com/Akaion/Bleak</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <Version>2.4.0</Version>
+    </PropertyGroup>
 
 </Project>

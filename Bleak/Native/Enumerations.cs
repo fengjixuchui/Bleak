@@ -1,47 +1,44 @@
-﻿using System;
+using System;
 
 namespace Bleak.Native
 {
     internal static class Enumerations
     {
-        internal enum ContextFlags
-        {
-            Control = 0x10001
-        }
-
         [Flags]
-        internal enum FileCharacteristics : ushort
-        {
-            RelocationsStripped = 0x01,
-            Dll = 0x2000
-        }
-
-        internal enum MachineType : ushort
-        {
-            X86 = 0x14C,
-            X64 = 0x8664
-        }
-
-        [Flags]
-        internal enum MemoryAllocationType
+        internal enum AllocationType
         {
             Commit = 0x1000,
             Reserve = 0x2000
         }
 
         [Flags]
-        internal enum MemoryFreeType
+        internal enum ContextFlags
+        {
+            Control = 0x10001
+        }
+        
+        [Flags]
+        internal enum FileCharacteristics : ushort
+        {
+            RelocationsStripped = 0x01,
+            Dll = 0x2000
+        }
+        
+        [Flags]
+        internal enum FreeType
         {
             Release = 0x8000
         }
-
-        internal enum MemoryInformationClass
-        {
-            BasicInformation = 0x00
-        }
-
+        
         [Flags]
-        internal enum MemoryProtectionType
+        internal enum MachineType : ushort
+        {
+            X86 = 0x14C,
+            X64 = 0x8664
+        }
+        
+        [Flags]
+        internal enum MemoryProtection
         {
             NoAccess = 0x01,
             ReadOnly = 0x02,
@@ -55,32 +52,27 @@ namespace Bleak.Native
             NoCache = 0x200,
             WriteCombine = 0x400
         }
-
+        
+        [Flags]
         internal enum NtStatus : uint
         {
             Success = 0x00
         }
-
+        
         [Flags]
-        internal enum ProcessAccessMask
-        {
-            SpecificRightsAll = 0xFFFF,
-            StandardRightsAll = 0x1F0000,
-            AllAccess = SpecificRightsAll | StandardRightsAll
-        }
-
         internal enum ProcessInformationClass
         {
             BasicInformation = 0x00,
             Wow64Information = 0x1A
         }
-
+        
+        [Flags]
         internal enum RelocationType : byte
         {
             HighLow = 0x03,
             Dir64 = 0x0A
         }
-
+        
         [Flags]
         internal enum SectionCharacteristics : uint
         {
@@ -89,7 +81,7 @@ namespace Bleak.Native
             MemoryRead = 0x040000000,
             MemoryWrite = 0x080000000
         }
-
+        
         [Flags]
         internal enum ThreadAccessMask
         {
@@ -98,6 +90,7 @@ namespace Bleak.Native
             AllAccess = SpecificRightsAll | StandardRightsAll
         }
 
+        [Flags]
         internal enum ThreadCreationType
         {
             HideFromDebugger = 0x04

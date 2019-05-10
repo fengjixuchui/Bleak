@@ -1,6 +1,6 @@
 ## Bleak 
 
-[![Build status](https://ci.appveyor.com/api/projects/status/5avg8vtr9kep050a?svg=true)](https://ci.appveyor.com/project/Akaion/bleak)
+[![Build status](https://ci.appveyor.com/api/projects/status/wp76wa0oe8robs3c?svg=true)](https://ci.appveyor.com/project/Akaion/bleak)
 
 A Windows native DLL injection library written in C# that supports several methods of injection.
 
@@ -10,17 +10,13 @@ A Windows native DLL injection library written in C# that supports several metho
 
 * CreateRemoteThread
 * ManualMap
-* QueueUserAPC
-* RtlCreateUserThread
 * ThreadHijack
 
 ### Injection Extensions
 
-* Eject DLL
-* Erase DLL Headers
-* Randomise DLL Headers
-* Unlink DLL From PEB
-
+* EjectDll
+* HideDllFromPeb
+* RandomiseDllHeaders
 
 ### Features
 
@@ -42,17 +38,18 @@ The example below describes a basic implementation of the library.
 ```csharp
 using Bleak;
 
-var injector = new Injector();
+var injector = new Injector(InjectionMethod.CreateRemoteThread, "processName", "pathToDll");
 
-// Inject a DLL into a process using the CreateRemoteThread method
+// Inject the DLL into the process
 
-injector.CreateRemoteThread("processName", "pathToDll");
+injector.InjectDll();
 
-// Erase the PE headers of a DLL loaded in a process
+// Hide the DLL from the PEB
 
-injector.EraseDllHeaders("processName", "pathToDll");
+injector.HideDllFromPeb();
 ```
-Full documentation for the library can be found [here](https://akaion.github.io/repositories/bleak.html) 
+
+Full documentation for the library can be found [here](https://akaion.github.io/repositories/bleak/bleak.html) 
 
 ----
 

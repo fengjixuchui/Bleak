@@ -1,9 +1,9 @@
-﻿using Bleak.Injection.Objects;
+using System;
 
 namespace Bleak.Injection.Interfaces
 {
     internal interface IInjectionMethod
     {
-        bool Call(InjectionProperties injectionProperties);
+        IntPtr Call();
     }
 }

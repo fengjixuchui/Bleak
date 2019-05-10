@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -44,7 +44,7 @@ namespace Bleak.Tools
 
             return temporaryDllPath;
         }
-
+        
         internal static string GenerateDllName(byte[] dllBytes)
         {
             // Hash the DLL bytes

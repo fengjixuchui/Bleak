@@ -1,5 +1,5 @@
-﻿using Bleak.Native;
 using System.Collections.Generic;
+using Bleak.Native;
 
 namespace Bleak.PortableExecutable.Objects
 {

@@ -1,4 +1,4 @@
-﻿using Bleak.Native;
+using Bleak.Native;
 
 namespace Bleak.PortableExecutable.Objects
 {

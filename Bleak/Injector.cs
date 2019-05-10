@@ -1,335 +1,151 @@
-﻿using Bleak.Injection;
-using Bleak.Injection.Extensions;
-using Bleak.Injection.Methods;
+using System;
+using System.IO;
+using Bleak.Handlers;
+using Bleak.Injection;
+using Bleak.Tools;
 
 namespace Bleak
 {
-    public class Injector
+    public class Injector: IDisposable
     {
-        public bool RandomiseDllName;
+        private readonly InjectionContext _injectionContext;
 
-        #region CreateRemoteThread
-
-        public bool CreateRemoteThread(int targetProcessId, byte[] dllBytes)
+        public Injector(InjectionMethod injectionMethod, int processId, byte[] dllBytes)
         {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, false, RandomiseDllName))
+            // Ensure the users operating system is valid
+
+            ValidationHandler.ValidateOperatingSystem();
+
+            // Ensure the arguments passed in are valid
+
+            if (processId <= 0 || dllBytes is null || dllBytes.Length == 0)
             {
-                return injectionManager.CallInjectionMethod<CreateRemoteThread>();
+                throw new ArgumentException("One or more of the arguments provided were invalid");
+            }
+
+            _injectionContext = injectionMethod == InjectionMethod.ManualMap
+                              ? new InjectionContext(injectionMethod, processId, dllBytes)
+                              : new InjectionContext(injectionMethod, processId, DllTools.CreateTemporaryDll(DllTools.GenerateDllName(dllBytes), dllBytes));
+        }
+
+        public Injector(InjectionMethod injectionMethod, int processId, string dllPath, bool randomiseDllName = false)
+        {
+            // Ensure the users operating system is valid
+
+            ValidationHandler.ValidateOperatingSystem();
+
+            // Ensure the arguments passed in are valid
+
+            if (processId <= 0 || string.IsNullOrWhiteSpace(dllPath))
+            {
+                throw new ArgumentException("One or more of the arguments provided were invalid");
+            }
+
+            // Ensure a valid DLL exists at the provided path
+
+            if (!File.Exists(dllPath) || Path.GetExtension(dllPath) != ".dll")
+            {
+                throw new ArgumentException("No DLL file exists at the provided path");
+            }
+
+            if (randomiseDllName)
+            {
+                // Create a temporary DLL on disk
+
+                var temporaryDllPath = DllTools.CreateTemporaryDll(DllTools.GenerateRandomDllName(), File.ReadAllBytes(dllPath));
+
+                _injectionContext = new InjectionContext(injectionMethod, processId, temporaryDllPath);
+            }
+
+            else
+            {
+                _injectionContext = new InjectionContext(injectionMethod, processId, dllPath);
             }
         }
 
-        public bool CreateRemoteThread(int targetProcessId, string dllPath)
+        public Injector(InjectionMethod injectionMethod, string processName, byte[] dllBytes)
         {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, false, RandomiseDllName))
+            // Ensure the users operating system is valid
+
+            ValidationHandler.ValidateOperatingSystem();
+
+            // Ensure the arguments passed in are valid
+
+            if (string.IsNullOrWhiteSpace(processName) || dllBytes is null || dllBytes.Length == 0)
             {
-                return injectionManager.CallInjectionMethod<CreateRemoteThread>();
+                throw new ArgumentException("One or more of the arguments provided were invalid");
+            }
+
+            _injectionContext = injectionMethod == InjectionMethod.ManualMap
+                              ? new InjectionContext(injectionMethod, processName, dllBytes)
+                              : new InjectionContext(injectionMethod, processName, DllTools.CreateTemporaryDll(DllTools.GenerateDllName(dllBytes), dllBytes));
+        }
+
+        public Injector(InjectionMethod injectionMethod, string processName, string dllPath, bool randomiseDllName = false)
+        {
+            // Ensure the users operating system is valid
+
+            ValidationHandler.ValidateOperatingSystem();
+
+            // Ensure the arguments passed in are valid
+
+            if (string.IsNullOrWhiteSpace(processName) || string.IsNullOrWhiteSpace(dllPath))
+            {
+                throw new ArgumentException("One or more of the arguments provided were invalid");
+            }
+
+            // Ensure a valid DLL exists at the provided path
+
+            if (!File.Exists(dllPath) || Path.GetExtension(dllPath) != ".dll")
+            {
+                throw new ArgumentException("No DLL file exists at the provided path");
+            }
+
+            if (randomiseDllName)
+            {
+                // Create a temporary DLL on disk
+
+                var temporaryDllPath = DllTools.CreateTemporaryDll(DllTools.GenerateRandomDllName(), File.ReadAllBytes(dllPath));
+
+                _injectionContext = new InjectionContext(injectionMethod, processName, temporaryDllPath);
+            }
+
+            else
+            {
+                _injectionContext = new InjectionContext(injectionMethod, processName, dllPath);
             }
         }
 
-        public bool CreateRemoteThread(string targetProcessName, byte[] dllBytes)
+        public void Dispose()
         {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<CreateRemoteThread>();
-            }
+            _injectionContext.Dispose();
         }
 
-        public bool CreateRemoteThread(string targetProcessName, string dllPath)
+        public bool EjectDll()
         {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<CreateRemoteThread>();
-            }
+            return _injectionContext.EjectDll();
         }
 
-        #endregion
-
-        #region EjectDll
-
-        public bool EjectDll(int targetProcessId, byte[] dllBytes)
+        public bool HideDllFromPeb()
         {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EjectDll>();
-            }
+            return _injectionContext.HideDllFromPeb();
         }
 
-        public bool EjectDll(int targetProcessId, string dllPath)
+        public IntPtr InjectDll()
         {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EjectDll>();
-            }
+            return _injectionContext.InjectDll();
         }
 
-        public bool EjectDll(string targetProcessName, byte[] dllBytes)
+        public bool RandomiseDllHeaders()
         {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EjectDll>();
-            }
+            return _injectionContext.RandomiseDllHeaders();
         }
+    }
 
-        public bool EjectDll(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EjectDll>();
-            }
-        }
-
-        #endregion
-
-        #region EraseDllHeaders
-
-        public bool EraseDllHeaders(int targetProcessId, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EraseDllHeaders>();
-            }
-        }
-
-        public bool EraseDllHeaders(int targetProcessId, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EraseDllHeaders>();
-            }
-        }
-
-        public bool EraseDllHeaders(string targetProcessName, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EraseDllHeaders>();
-            }
-        }
-
-        public bool EraseDllHeaders(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<EraseDllHeaders>();
-            }
-        }
-
-        #endregion
-
-        #region ManualMap
-
-        public bool ManualMap(int targetProcessId, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, true, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ManualMap>();
-            }
-        }
-
-        public bool ManualMap(int targetProcessId, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ManualMap>();
-            }
-        }
-
-        public bool ManualMap(string targetProcessName, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, true, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ManualMap>();
-            }
-        }
-
-        public bool ManualMap(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ManualMap>();
-            }
-        }
-
-        #endregion
-
-        #region QueueUserApc
-
-        public bool QueueUserApc(int targetProcessId, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<QueueUserApc>();
-            }
-        }
-
-        public bool QueueUserApc(int targetProcessId, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<QueueUserApc>();
-            }
-        }
-
-        public bool QueueUserApc(string targetProcessName, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<QueueUserApc>();
-            }
-        }
-
-        public bool QueueUserApc(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<QueueUserApc>();
-            }
-        }
-
-        #endregion
-
-        #region RandomiseDllHeaders
-
-        public bool RandomiseDllHeaders(int targetProcessId, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<RandomiseDllHeaders>();
-            }
-        }
-
-        public bool RandomiseDllHeaders(int targetProcessId, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<RandomiseDllHeaders>();
-            }
-        }
-
-        public bool RandomiseDllHeaders(string targetProcessName, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<RandomiseDllHeaders>();
-            }
-        }
-
-        public bool RandomiseDllHeaders(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<RandomiseDllHeaders>();
-            }
-        }
-
-        #endregion
-
-        #region RtlCreateUserThread
-
-        public bool RtlCreateUserThread(int targetProcessId, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<RtlCreateUserThread>();
-            }
-        }
-
-        public bool RtlCreateUserThread(int targetProcessId, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<RtlCreateUserThread>();
-            }
-        }
-
-        public bool RtlCreateUserThread(string targetProcessName, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<RtlCreateUserThread>();
-            }
-        }
-
-        public bool RtlCreateUserThread(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<RtlCreateUserThread>();
-            }
-        }
-
-        #endregion
-
-        #region ThreadHijack
-
-        public bool ThreadHijack(int targetProcessId, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ThreadHijack>();
-            }
-        }
-
-        public bool ThreadHijack(int targetProcessId, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ThreadHijack>();
-            }
-        }
-
-        public bool ThreadHijack(string targetProcessName, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ThreadHijack>();
-            }
-        }
-
-        public bool ThreadHijack(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, false, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionMethod<ThreadHijack>();
-            }
-        }
-
-        #endregion
-
-        #region UnlinkDllFromPeb
-
-        public bool UnlinkDllFromPeb(int targetProcessId, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<UnlinkDllFromPeb>();
-            }
-        }
-
-        public bool UnlinkDllFromPeb(int targetProcessId, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessId, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<UnlinkDllFromPeb>();
-            }
-        }
-
-        public bool UnlinkDllFromPeb(string targetProcessName, byte[] dllBytes)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllBytes, false, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<UnlinkDllFromPeb>();
-            }
-        }
-
-        public bool UnlinkDllFromPeb(string targetProcessName, string dllPath)
-        {
-            using (var injectionManager = new InjectionManager(targetProcessName, dllPath, true, RandomiseDllName))
-            {
-                return injectionManager.CallInjectionExtension<UnlinkDllFromPeb>();
-            }
-        }
-
-        #endregion
+    public enum InjectionMethod
+    {
+        CreateRemoteThread,
+        ManualMap,
+        ThreadHijack
     }
 }

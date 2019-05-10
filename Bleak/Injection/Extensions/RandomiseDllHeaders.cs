@@ -1,42 +1,30 @@
-﻿using Bleak.Injection.Interfaces;
-using Bleak.Injection.Objects;
-using Bleak.Native;
-using Bleak.RemoteProcess.Objects;
-using Bleak.Syscall.Definitions;
 using System;
-using System.IO;
-using System.Runtime.InteropServices;
+using Bleak.Injection.Objects;
 
 namespace Bleak.Injection.Extensions
 {
-    internal class RandomiseDllHeaders : IInjectionExtension
+    internal class RandomiseDllHeaders
     {
-        public bool Call(InjectionProperties injectionProperties)
+        private readonly InjectionWrapper _injectionWrapper;
+
+        internal RandomiseDllHeaders(InjectionWrapper injectionWrapper)
         {
-            // Look for the DLL in the module list of the target process
+            _injectionWrapper = injectionWrapper;
+        }
 
-            var dllName = Path.GetFileName(injectionProperties.DllPath);
+        internal bool Call(IntPtr dllAddress)
+        {
+            var headerSize = _injectionWrapper.RemoteProcess.IsWow64
+                           ? _injectionWrapper.PeParser.GetPeHeaders().NtHeaders32.OptionalHeader.SizeOfHeaders
+                           : _injectionWrapper.PeParser.GetPeHeaders().NtHeaders64.OptionalHeader.SizeOfHeaders;
 
-            var module = injectionProperties.RemoteProcess.Modules.Find(m => m.Name == dllName);
+            // Write over the header region of the DLL with random bytes
 
-            if (module.Equals(default(ModuleInstance)))
-            {
-                throw new ArgumentException($"No DLL with the name {dllName} was found in the target processes module list");
-            }
-
-            // Query the header region of the DLL in the target process
-
-            var memoryInformationBuffer = (IntPtr) injectionProperties.SyscallManager.InvokeSyscall<NtQueryVirtualMemory>(injectionProperties.RemoteProcess.Handle, module.BaseAddress);
-
-            var memoryInformation = Marshal.PtrToStructure<Structures.MemoryBasicInformation>(memoryInformationBuffer);
-
-            // Write over the header region with random bytes
-
-            var randomBuffer = new byte[(int) memoryInformation.RegionSize];
+            var randomBuffer = new byte[(int) headerSize];
 
             new Random().NextBytes(randomBuffer);
 
-            injectionProperties.MemoryManager.WriteVirtualMemory(module.BaseAddress, randomBuffer);
+            _injectionWrapper.MemoryManager.WriteVirtualMemory(dllAddress, randomBuffer);
 
             return true;
         }

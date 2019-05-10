@@ -1,40 +1,59 @@
-﻿using Bleak.Injection.Interfaces;
-using Bleak.Injection.Objects;
-using Bleak.Native;
-using Bleak.Native.SafeHandle;
-using Bleak.Syscall.Definitions;
 using System;
 using System.Text;
+using Bleak.Injection.Interfaces;
+using Bleak.Injection.Objects;
+using Bleak.Injection.Tools;
 
 namespace Bleak.Injection.Methods
 {
     internal class CreateRemoteThread : IInjectionMethod
     {
-        public bool Call(InjectionProperties injectionProperties)
+        private readonly InjectionTools _injectionTools;
+
+        private readonly InjectionWrapper _injectionWrapper;
+
+        public CreateRemoteThread(InjectionWrapper injectionWrapper)
         {
-            // Get the address of the LoadLibraryW function in the target process
+            _injectionTools = new InjectionTools(injectionWrapper);
 
-            var loadLibraryAddress = injectionProperties.RemoteProcess.GetFunctionAddress("kernel32.dll", "LoadLibraryW");
+            _injectionWrapper = injectionWrapper;
+        }
 
-            // Write the DLL path into the target process
+        public IntPtr Call()
+        {
+            // Write the DLL path into the remote process
 
-            var dllPathBuffer = injectionProperties.MemoryManager.AllocateVirtualMemory(IntPtr.Zero, injectionProperties.DllPath.Length, Enumerations.MemoryProtectionType.ExecuteReadWrite);
+            var dllPathBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(_injectionWrapper.DllPath.Length);
 
-            var dllPathBytes = Encoding.Unicode.GetBytes(injectionProperties.DllPath);
+            var dllPathBytes = Encoding.Unicode.GetBytes(_injectionWrapper.DllPath);
 
-            injectionProperties.MemoryManager.WriteVirtualMemory(dllPathBuffer, dllPathBytes);
+            _injectionWrapper.MemoryManager.WriteVirtualMemory(dllPathBuffer, dllPathBytes);
 
-            // Create a thread to call LoadLibraryW in the target process
+            // Write a UnicodeString representing the DLL path into the remote process
 
-            var remoteThreadHandle = (SafeThreadHandle) injectionProperties.SyscallManager.InvokeSyscall<NtCreateThreadEx>(injectionProperties.RemoteProcess.Handle, loadLibraryAddress, dllPathBuffer);
+            var unicodeStringBuffer = _injectionTools.CreateRemoteUnicodeString(dllPathBuffer);
 
-            PInvoke.WaitForSingleObject(remoteThreadHandle, uint.MaxValue);
+            // Call LdrLoadDll in the remote process
 
-            injectionProperties.MemoryManager.FreeVirtualMemory(dllPathBuffer);
+            var moduleHandleBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory<IntPtr>();
 
-            remoteThreadHandle.Dispose();
+            _injectionTools.CallRemoteFunction("ntdll.dll", "LdrLoadDll", 0, 0, (ulong) unicodeStringBuffer, (ulong) moduleHandleBuffer);
 
-            return true;
+            // Free the buffers allocated in the remote process
+
+            _injectionWrapper.MemoryManager.FreeVirtualMemory(dllPathBuffer);
+
+            _injectionWrapper.MemoryManager.FreeVirtualMemory(unicodeStringBuffer);
+
+            try
+            {
+                return _injectionWrapper.MemoryManager.ReadVirtualMemory<IntPtr>(moduleHandleBuffer);
+            }
+
+            finally
+            {
+                _injectionWrapper.MemoryManager.FreeVirtualMemory(moduleHandleBuffer);
+            }
         }
     }
 }

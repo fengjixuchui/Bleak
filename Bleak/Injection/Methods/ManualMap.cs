@@ -1,27 +1,104 @@
-﻿using Bleak.Injection.Interfaces;
-using Bleak.Injection.Methods.Shellcode;
-using Bleak.Injection.Objects;
-using Bleak.Memory;
-using Bleak.Native;
-using Bleak.Native.SafeHandle;
-using Bleak.PortableExecutable;
-using Bleak.PortableExecutable.Objects;
-using Bleak.Syscall.Definitions;
-using Bleak.Tools;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
+using Bleak.Injection.Interfaces;
+using Bleak.Injection.Objects;
+using Bleak.Injection.Tools;
+using Bleak.Native;
+using Bleak.Shared;
 
 namespace Bleak.Injection.Methods
 {
     internal class ManualMap : IInjectionMethod
     {
-        private void BuildImportTable(InjectionProperties injectionProperties, IntPtr localDllAddress)
+        private readonly InjectionTools _injectionTools;
+
+        private readonly InjectionWrapper _injectionWrapper;
+
+        private IntPtr _localDllAddress;
+
+        private IntPtr _remoteDllAddress;
+
+        public ManualMap(InjectionWrapper injectionWrapper)
         {
-            var importedFunctions = injectionProperties.PeParser.GetImportedFunctions();
+            _injectionTools = new InjectionTools(injectionWrapper);
+
+            _injectionWrapper = injectionWrapper;
+        }
+
+        public IntPtr Call()
+        {
+            // Store the DLL bytes in a buffer
+
+            var dllBufferHandle = GCHandle.Alloc(_injectionWrapper.DllBytes.Clone(), GCHandleType.Pinned);
+
+            _localDllAddress = dllBufferHandle.AddrOfPinnedObject();
+
+            // Build the import table of the DLL in the local process
+
+            BuildImportTable();
+
+            // Allocate memory for the DLL in the remote process
+
+            var peHeaders = _injectionWrapper.PeParser.GetPeHeaders();
+
+            var preferredBaseAddress = _injectionWrapper.RemoteProcess.IsWow64
+                                     ? _injectionWrapper.PeParser.GetPeHeaders().NtHeaders32.OptionalHeader.ImageBase
+                                     : _injectionWrapper.PeParser.GetPeHeaders().NtHeaders64.OptionalHeader.ImageBase;
+
+            var dllSize = _injectionWrapper.RemoteProcess.IsWow64
+                        ? peHeaders.NtHeaders32.OptionalHeader.SizeOfImage
+                        : peHeaders.NtHeaders64.OptionalHeader.SizeOfImage;
+
+            try
+            {
+                _remoteDllAddress = _injectionWrapper.MemoryManager.AllocateVirtualMemory((IntPtr) preferredBaseAddress, (int) dllSize);
+            }
+
+            catch (Win32Exception)
+            {
+                _remoteDllAddress = _injectionWrapper.MemoryManager.AllocateVirtualMemory((int) dllSize);
+            }
+
+            // Relocate the DLL in the local process
+
+            RelocateImage();
+
+            // Map the sections of the DLL into the remote process
+
+            MapSections();
+
+            // Map the headers of the DLL into the remote process
+
+            MapHeaders();
+
+            // Call any TLS callbacks
+
+            CallTlsCallbacks();
+
+            // Call the entry point of the DLL
+
+            var dllEntryPointAddress = _injectionWrapper.RemoteProcess.IsWow64
+                                     ? _remoteDllAddress.AddOffset(peHeaders.NtHeaders32.OptionalHeader.AddressOfEntryPoint)
+                                     : _remoteDllAddress.AddOffset(peHeaders.NtHeaders64.OptionalHeader.AddressOfEntryPoint);
+
+            if (dllEntryPointAddress != _remoteDllAddress)
+            {
+                CallEntryPoint(dllEntryPointAddress);
+            }
+
+            dllBufferHandle.Free();
+
+            return _remoteDllAddress;
+        }
+
+        private void BuildImportTable()
+        {
+            var importedFunctions = _injectionWrapper.PeParser.GetImportedFunctions();
 
             if (importedFunctions.Count == 0)
             {
@@ -30,169 +107,125 @@ namespace Bleak.Injection.Methods
                 return;
             }
 
-            // Group the imported functions by the DLL they reside in
-
-            var groupedFunctions = importedFunctions.GroupBy(importedFunction => importedFunction.DllName).ToList();
-
             // Get the API set mappings
 
-            List<ApiSetMapping> apiSetMappings;
+            var apiSetMappings = GetApiSetMappings();
 
-            using (var peParser = new PeParser(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "apisetschema.dll")))
+            // Resolve the DLL of any functions imported from a virtual DLL
+
+            foreach (var importedFunction in importedFunctions)
             {
-                apiSetMappings = peParser.GetApiSetMappings();
+                if (importedFunction.Dll.StartsWith("api-ms"))
+                {
+                    importedFunction.Dll = apiSetMappings.Find(apiSetMapping => apiSetMapping.VirtualDll.Equals(importedFunction.Dll, StringComparison.OrdinalIgnoreCase)).MappedToDll;
+                }
             }
 
-            var systemFolderPath = injectionProperties.RemoteProcess.IsWow64
+            // Group the imported functions by the DLL they reside in
+
+            var groupedFunctions = importedFunctions.GroupBy(importedFunction => importedFunction.Dll).ToList();
+
+            // Ensure the dependencies of the DLL are loaded in the remote process
+
+            var systemFolderPath = _injectionWrapper.RemoteProcess.IsWow64
                                  ? Environment.GetFolderPath(Environment.SpecialFolder.SystemX86)
                                  : Environment.GetFolderPath(Environment.SpecialFolder.System);
 
             foreach (var dll in groupedFunctions)
             {
-                var dllName = dll.Key;
-
-                if (dllName.StartsWith("api-ms"))
+                if (!_injectionWrapper.RemoteProcess.Modules.Any(module => module.Name.Equals(dll.Key, StringComparison.OrdinalIgnoreCase)))
                 {
-                    dllName = apiSetMappings.Find(apiSetMapping => apiSetMapping.VirtualDll.Equals(dllName, StringComparison.OrdinalIgnoreCase)).MappedToDll;
-                }
+                    // Load the DLL into the remote process
 
-                // Ensure the DLL is loaded in the target process
+                    using (var injector = new Injector(InjectionMethod.CreateRemoteThread, _injectionWrapper.RemoteProcess.Process.Id, Path.Combine(systemFolderPath, dll.Key)))
+                    {
+                        injector.InjectDll();
+                    }
 
-                if (!injectionProperties.RemoteProcess.Modules.Any(module => module.Name.Equals(dllName, StringComparison.OrdinalIgnoreCase)))
-                {
-                    // Load the DLL into the target process
-
-                    new Injector().CreateRemoteThread(injectionProperties.RemoteProcess.TargetProcess.Id, Path.Combine(systemFolderPath, dllName));
+                    _injectionWrapper.RemoteProcess.Refresh();
                 }
             }
-
-            injectionProperties.RemoteProcess.Refresh();
 
             foreach (var importedFunction in groupedFunctions.SelectMany(dll => dll.Select(importedFunction => importedFunction)))
             {
-                var dllName = importedFunction.DllName;
-
-                if (dllName.StartsWith("api-ms"))
-                {
-                    dllName = apiSetMappings.Find(apiSetMapping => apiSetMapping.VirtualDll.Equals(dllName, StringComparison.OrdinalIgnoreCase)).MappedToDll;
-                }
-
                 // Get the address of the imported function
 
-                var importedFunctionAddress = injectionProperties.RemoteProcess.GetFunctionAddress(dllName, importedFunction.Name);
+                IntPtr importedFunctionAddress;
+
+                importedFunctionAddress = importedFunction.Name is null
+                                        ? _injectionWrapper.RemoteProcess.GetFunctionAddress(importedFunction.Dll, importedFunction.Ordinal)
+                                        : _injectionWrapper.RemoteProcess.GetFunctionAddress(importedFunction.Dll, importedFunction.Name);
 
                 // Write the imported function into the local process
 
-                Marshal.WriteInt64(localDllAddress.AddOffset(importedFunction.Offset), (long) importedFunctionAddress);
+                Marshal.WriteIntPtr(_localDllAddress.AddOffset(importedFunction.Offset), importedFunctionAddress);
             }
         }
 
-        public bool Call(InjectionProperties injectionProperties)
+        private void CallEntryPoint(IntPtr entryPointAddress)
         {
-            var localDllAddress = injectionProperties.DllPath is null
-                                ? LocalMemoryTools.StoreBytesInBuffer(injectionProperties.DllBytes)
-                                : LocalMemoryTools.StoreBytesInBuffer(File.ReadAllBytes(injectionProperties.DllPath));
+            // Call the entry point of the DLL or TLS callback with DllProcessAttach in the remote process
 
-            // Build the import table of the DLL
-
-            BuildImportTable(injectionProperties, localDllAddress);
-
-            var peHeaders = injectionProperties.PeParser.GetHeaders();
-
-            // Allocate memory for the DLL in the target process
-
-            var allocationBaseAddress = injectionProperties.RemoteProcess.IsWow64
-                                      ? peHeaders.NtHeaders32.OptionalHeader.ImageBase
-                                      : peHeaders.NtHeaders64.OptionalHeader.ImageBase;
-
-            var dllSize = injectionProperties.RemoteProcess.IsWow64
-                        ? peHeaders.NtHeaders32.OptionalHeader.SizeOfImage
-                        : peHeaders.NtHeaders64.OptionalHeader.SizeOfImage;
-
-            IntPtr remoteDllAddress;
-
-            try
-            {
-                remoteDllAddress = injectionProperties.MemoryManager.AllocateVirtualMemory((IntPtr) allocationBaseAddress, (int) dllSize, Enumerations.MemoryProtectionType.ExecuteReadWrite);
-            }
-
-            catch (Win32Exception)
-            {
-                remoteDllAddress = injectionProperties.MemoryManager.AllocateVirtualMemory(IntPtr.Zero, (int) dllSize, Enumerations.MemoryProtectionType.ExecuteReadWrite);
-            }
-
-            // Perform any needed relocations
-
-            PerformRelocations(injectionProperties, localDllAddress, remoteDllAddress);
-
-            // Map the sections of the DLL
-
-            MapSections(injectionProperties, localDllAddress, remoteDllAddress);
-
-            // Map randomised PE headers
-
-            MapHeaders(injectionProperties, remoteDllAddress);
-
-            // Call any TLS callbacks
-
-            CallTlsCallbacks(injectionProperties, remoteDllAddress);
-
-            // Call the entry point of the DLL
-
-            var dllEntryPointAddress = injectionProperties.RemoteProcess.IsWow64
-                                     ? remoteDllAddress.AddOffset(peHeaders.NtHeaders32.OptionalHeader.AddressOfEntryPoint)
-                                     : remoteDllAddress.AddOffset(peHeaders.NtHeaders64.OptionalHeader.AddressOfEntryPoint);
-
-            if (dllEntryPointAddress != remoteDllAddress)
-            {
-                CallEntryPoint(injectionProperties, remoteDllAddress, dllEntryPointAddress);
-            }
-
-            LocalMemoryTools.FreeMemoryForBuffer(localDllAddress);
-
-            return true;
+            _injectionTools.CallRemoteFunction(entryPointAddress, (ulong) _remoteDllAddress, Constants.DllProcessAttach, 0);
         }
 
-        private void CallEntryPoint(InjectionProperties injectionProperties, IntPtr remoteDllAddress, IntPtr entryPointAddress)
+        private void CallTlsCallbacks()
         {
-            // Write the shellcode used to call the entry point of the DLL or TLS callback in the target process
-
-            var shellcode = injectionProperties.RemoteProcess.IsWow64
-                          ? CallDllMainX86.GetShellcode(remoteDllAddress, entryPointAddress)
-                          : CallDllMainX64.GetShellcode(remoteDllAddress, entryPointAddress);
-
-            var shellcodeBuffer = injectionProperties.MemoryManager.AllocateVirtualMemory(IntPtr.Zero, shellcode.Length, Enumerations.MemoryProtectionType.ExecuteReadWrite);
-
-            injectionProperties.MemoryManager.WriteVirtualMemory(shellcodeBuffer, shellcode);
-
-            // Create a thread to call the shellcode in the target process
-
-            var remoteThreadHandle = (SafeThreadHandle) injectionProperties.SyscallManager.InvokeSyscall<NtCreateThreadEx>(injectionProperties.RemoteProcess.Handle, shellcodeBuffer, IntPtr.Zero);
-
-            PInvoke.WaitForSingleObject(remoteThreadHandle, uint.MaxValue);
-
-            injectionProperties.MemoryManager.FreeVirtualMemory(shellcodeBuffer);
-
-            remoteThreadHandle.Dispose();
-        }
-
-        private void CallTlsCallbacks(InjectionProperties injectionProperties, IntPtr remoteDllAddress)
-        {
-            foreach (var tlsCallback in injectionProperties.PeParser.GetTlsCallbacks())
+            foreach (var tlsCallback in _injectionWrapper.PeParser.GetTlsCallbacks())
             {
-                CallEntryPoint(injectionProperties, remoteDllAddress, remoteDllAddress.AddOffset(tlsCallback.Offset));
+                CallEntryPoint(_remoteDllAddress.AddOffset(tlsCallback.Offset));
             }
         }
 
-        private Enumerations.MemoryProtectionType GetSectionProtection(Enumerations.SectionCharacteristics sectionCharacteristics)
+        private List<ApiSetMapping> GetApiSetMappings()
+        {
+            var apiSetMappings = new List<ApiSetMapping>();
+
+            // Read the namespace of the API set
+
+            var apiSetDataAddress = _injectionWrapper.RemoteProcess.IsWow64
+                                  ? (IntPtr) _injectionWrapper.RemoteProcess.GetWow64Peb().ApiSetMap
+                                  : (IntPtr) _injectionWrapper.RemoteProcess.GetPeb().ApiSetMap;
+
+            var apiSetNamespace = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ApiSetNamespace>(apiSetDataAddress);
+
+            for (var index = 0; index < (int) apiSetNamespace.Count; index += 1)
+            {
+                // Read the namespace entry
+
+                var namespaceEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ApiSetNamespaceEntry>(apiSetDataAddress.AddOffset(apiSetNamespace.EntryOffset + Marshal.SizeOf<Structures.ApiSetNamespaceEntry>() * index));
+
+                // Read the name of the namespace entry
+
+                var namespaceEntryNameBytes = _injectionWrapper.MemoryManager.ReadVirtualMemory(apiSetDataAddress.AddOffset(namespaceEntry.NameOffset), (int) namespaceEntry.NameLength);
+
+                var namespaceEntryName = string.Concat(Encoding.Unicode.GetString(namespaceEntryNameBytes), ".dll");
+
+                // Read the value entry that the namespace entry maps to
+
+                var valueEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ApiSetValueEntry>(apiSetDataAddress.AddOffset(namespaceEntry.ValueOffset));
+
+                // Read the name of the value entry
+
+                var valueEntryNameBytes = _injectionWrapper.MemoryManager.ReadVirtualMemory(apiSetDataAddress.AddOffset(valueEntry.ValueOffset), (int) valueEntry.ValueCount);
+
+                var valueEntryName = Encoding.Unicode.GetString(valueEntryNameBytes);
+
+                apiSetMappings.Add(new ApiSetMapping(valueEntryName, namespaceEntryName));
+            }
+
+            return apiSetMappings;
+        }
+
+        private static Enumerations.MemoryProtection GetSectionProtection(Enumerations.SectionCharacteristics sectionCharacteristics)
         {
             // Determine the protection of the section
 
-            var sectionProtection = (Enumerations.MemoryProtectionType) 0;
+            var sectionProtection = default(Enumerations.MemoryProtection);
 
             if (sectionCharacteristics.HasFlag(Enumerations.SectionCharacteristics.MemoryNotCached))
             {
-                sectionProtection |= Enumerations.MemoryProtectionType.NoCache;
+                sectionProtection |= Enumerations.MemoryProtection.NoCache;
             }
 
             if (sectionCharacteristics.HasFlag(Enumerations.SectionCharacteristics.MemoryExecute))
@@ -201,23 +234,23 @@ namespace Bleak.Injection.Methods
                 {
                     if (sectionCharacteristics.HasFlag(Enumerations.SectionCharacteristics.MemoryWrite))
                     {
-                        sectionProtection |= Enumerations.MemoryProtectionType.ExecuteReadWrite;
+                        sectionProtection |= Enumerations.MemoryProtection.ExecuteReadWrite;
                     }
 
                     else
                     {
-                        sectionProtection |= Enumerations.MemoryProtectionType.ExecuteRead;
+                        sectionProtection |= Enumerations.MemoryProtection.ExecuteRead;
                     }
                 }
 
                 else if (sectionCharacteristics.HasFlag(Enumerations.SectionCharacteristics.MemoryWrite))
                 {
-                    sectionProtection |= Enumerations.MemoryProtectionType.ExecuteWriteCopy;
+                    sectionProtection |= Enumerations.MemoryProtection.ExecuteWriteCopy;
                 }
 
                 else
                 {
-                    sectionProtection |= Enumerations.MemoryProtectionType.Execute;
+                    sectionProtection |= Enumerations.MemoryProtection.Execute;
                 }
             }
 
@@ -227,81 +260,82 @@ namespace Bleak.Injection.Methods
                 {
                     if (sectionCharacteristics.HasFlag(Enumerations.SectionCharacteristics.MemoryWrite))
                     {
-                        sectionProtection |= Enumerations.MemoryProtectionType.ReadWrite;
+                        sectionProtection |= Enumerations.MemoryProtection.ReadWrite;
                     }
 
                     else
                     {
-                        sectionProtection |= Enumerations.MemoryProtectionType.ReadOnly;
+                        sectionProtection |= Enumerations.MemoryProtection.ReadOnly;
                     }
                 }
 
                 else if (sectionCharacteristics.HasFlag(Enumerations.SectionCharacteristics.MemoryWrite))
                 {
-                    sectionProtection |= Enumerations.MemoryProtectionType.WriteCopy;
+                    sectionProtection |= Enumerations.MemoryProtection.WriteCopy;
                 }
 
                 else
                 {
-                    sectionProtection |= Enumerations.MemoryProtectionType.NoAccess;
+                    sectionProtection |= Enumerations.MemoryProtection.NoAccess;
                 }
             }
 
             return sectionProtection;
         }
 
-        private void MapHeaders(InjectionProperties injectionProperties, IntPtr remoteDllAddress)
+        private void MapHeaders()
         {
-            // Determine the size of the PE headers of the DLL
+            // Read the PE headers of the DLL
 
-            var headerSize = injectionProperties.RemoteProcess.IsWow64
-                           ? injectionProperties.PeParser.GetHeaders().NtHeaders32.OptionalHeader.SizeOfHeaders
-                           : injectionProperties.PeParser.GetHeaders().NtHeaders64.OptionalHeader.SizeOfHeaders;
+            var headerSize = _injectionWrapper.RemoteProcess.IsWow64
+                           ? _injectionWrapper.PeParser.GetPeHeaders().NtHeaders32.OptionalHeader.SizeOfHeaders
+                           : _injectionWrapper.PeParser.GetPeHeaders().NtHeaders64.OptionalHeader.SizeOfHeaders;
 
             var headerBytes = new byte[headerSize];
 
-            // Fill the header bytes with random bytes
+            Marshal.Copy(_localDllAddress, headerBytes, 0, headerBytes.Length);
 
-            new Random().NextBytes(headerBytes);
+            // Write the PE headers into the remote process
 
-            // Write the PE headers into the target process
+            _injectionWrapper.MemoryManager.WriteVirtualMemory(_remoteDllAddress, headerBytes);
 
-            injectionProperties.MemoryManager.WriteVirtualMemory(remoteDllAddress, headerBytes);
-
-            // Adjust the protection of the PE header region
-
-            injectionProperties.MemoryManager.ProtectVirtualMemory(remoteDllAddress, (int) headerSize, Enumerations.MemoryProtectionType.ReadOnly);
+            _injectionWrapper.MemoryManager.ProtectVirtualMemory(_remoteDllAddress, (int) headerSize, Enumerations.MemoryProtection.ReadOnly);
         }
 
-        private void MapSections(InjectionProperties injectionProperties, IntPtr localDllAddress, IntPtr remoteDllAddress)
+        private void MapSections()
         {
-            foreach (var section in injectionProperties.PeParser.GetHeaders().SectionHeaders)
+            foreach (var section in _injectionWrapper.PeParser.GetPeHeaders().SectionHeaders)
             {
+                if (section.SizeOfRawData == 0)
+                {
+                    continue;
+                }
+
                 // Get the data of the section
 
-                var sectionDataAddress = localDllAddress.AddOffset(section.PointerToRawData);
+                var sectionDataAddress = _localDllAddress.AddOffset(section.PointerToRawData);
 
                 var sectionData = new byte[section.SizeOfRawData];
 
                 Marshal.Copy(sectionDataAddress, sectionData, 0, (int) section.SizeOfRawData);
 
-                // Write the section into the target process
+                // Write the section into the remote process
 
-                var sectionAddress = remoteDllAddress.AddOffset(section.VirtualAddress);
+                var sectionAddress = _remoteDllAddress.AddOffset(section.VirtualAddress);
 
-                injectionProperties.MemoryManager.WriteVirtualMemory(sectionAddress, sectionData);
+                _injectionWrapper.MemoryManager.WriteVirtualMemory(sectionAddress, sectionData);
 
                 // Adjust the protection of the section
 
                 var sectionProtection = GetSectionProtection(section.Characteristics);
 
-                injectionProperties.MemoryManager.ProtectVirtualMemory(sectionAddress, (int) section.SizeOfRawData, sectionProtection);
+                _injectionWrapper.MemoryManager.ProtectVirtualMemory(sectionAddress, (int) section.SizeOfRawData, sectionProtection);
             }
         }
 
-        private void PerformRelocations(InjectionProperties injectionProperties, IntPtr localDllAddress, IntPtr remoteDllAddress)
+        private void RelocateImage()
         {
-            var baseRelocations = injectionProperties.PeParser.GetBaseRelocations();
+            var baseRelocations = _injectionWrapper.PeParser.GetBaseRelocations();
 
             if (baseRelocations.Count == 0)
             {
@@ -310,19 +344,17 @@ namespace Bleak.Injection.Methods
                 return;
             }
 
-            var peHeaders = injectionProperties.PeParser.GetHeaders();
+            var preferredBaseAddress = _injectionWrapper.RemoteProcess.IsWow64
+                                     ? _injectionWrapper.PeParser.GetPeHeaders().NtHeaders32.OptionalHeader.ImageBase
+                                     : _injectionWrapper.PeParser.GetPeHeaders().NtHeaders64.OptionalHeader.ImageBase;
 
-            var baseAddress = injectionProperties.RemoteProcess.IsWow64 
-                            ? peHeaders.NtHeaders32.OptionalHeader.ImageBase
-                            : peHeaders.NtHeaders64.OptionalHeader.ImageBase;
+            // Calculate the preferred base address delta
 
-            // Calculate the base address delta
-
-            var delta = (long) remoteDllAddress - (long) baseAddress;
+            var delta = (long) _remoteDllAddress - (long) preferredBaseAddress;
 
             if (delta == 0)
             {
-                // The DLL is loaded at its default base address and no relocations need to be applied
+                // The DLL is loaded at its preferred base address and no relocations need to be applied
 
                 return;
             }
@@ -331,7 +363,7 @@ namespace Bleak.Injection.Methods
             {
                 // Calculate the base address of the relocation block
 
-                var relocationBlockAddress = localDllAddress.AddOffset(baseRelocation.Offset);
+                var relocationBlockAddress = _localDllAddress.AddOffset(baseRelocation.Offset);
 
                 foreach (var relocation in baseRelocation.Relocations)
                 {
@@ -346,27 +378,25 @@ namespace Bleak.Injection.Methods
                             // Perform the relocation
 
                             var relocationValue = Marshal.ReadInt32(relocationAddress) + (int) delta;
-                            
+
                             Marshal.WriteInt32(relocationAddress, relocationValue);
-                            
+
                             break;
                         }
-                        
+
                         case Enumerations.RelocationType.Dir64:
                         {
                             // Perform the relocation
 
                             var relocationValue = Marshal.ReadInt64(relocationAddress) + delta;
-                            
+
                             Marshal.WriteInt64(relocationAddress, relocationValue);
-                            
+
                             break;
                         }
                     }
                 }
             }
         }
-
-        
     }
 }
