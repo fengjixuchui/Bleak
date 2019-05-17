@@ -1,18 +1,19 @@
 using System;
+using Bleak.Injection.Interfaces;
 using Bleak.Injection.Objects;
 
 namespace Bleak.Injection.Extensions
 {
-    internal class RandomiseDllHeaders
+    internal class RandomiseDllHeaders : IInjectionExtension
     {
         private readonly InjectionWrapper _injectionWrapper;
 
-        internal RandomiseDllHeaders(InjectionWrapper injectionWrapper)
+        public RandomiseDllHeaders(InjectionWrapper injectionWrapper)
         {
             _injectionWrapper = injectionWrapper;
         }
 
-        internal bool Call(IntPtr dllAddress)
+        public bool Call(InjectionContext injectionContext)
         {
             var headerSize = _injectionWrapper.RemoteProcess.IsWow64
                            ? _injectionWrapper.PeParser.GetPeHeaders().NtHeaders32.OptionalHeader.SizeOfHeaders
@@ -24,7 +25,7 @@ namespace Bleak.Injection.Extensions
 
             new Random().NextBytes(randomBuffer);
 
-            _injectionWrapper.MemoryManager.WriteVirtualMemory(dllAddress, randomBuffer);
+            _injectionWrapper.MemoryManager.WriteVirtualMemory(injectionContext.DllBaseAddress, randomBuffer);
 
             return true;
         }

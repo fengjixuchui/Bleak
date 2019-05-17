@@ -13,6 +13,9 @@ namespace Bleak.Native
         internal static extern bool CloseHandle(IntPtr handle);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern bool FlushInstructionCache(SafeProcessHandle processHandle, IntPtr baseAddress, int regionSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern bool GetThreadContext(SafeThreadHandle threadHandle, IntPtr contextBuffer);
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -22,7 +25,7 @@ namespace Bleak.Native
         internal static extern SafeThreadHandle OpenThread(Enumerations.ThreadAccessMask desiredAccess, bool inheritHandle, int threadId);
 
         [DllImport("kernel32.dll", SetLastError = true)]
-        internal static extern bool ReadProcessMemory(SafeProcessHandle processHandle, IntPtr baseAddress, IntPtr bytesReadBuffer, int bytesToRead, IntPtr numberOfBytesReadBuffer);
+        internal static extern bool ReadProcessMemory(SafeProcessHandle processHandle, IntPtr baseAddress, IntPtr bytesReadBuffer, int bytesToRead, out int numberOfBytesRead);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern int ResumeThread(SafeThreadHandle threadHandle);
@@ -55,15 +58,15 @@ namespace Bleak.Native
         internal static extern int Wow64SuspendThread(SafeThreadHandle threadHandle);
 
         [DllImport("kernel32.dll", SetLastError = true)]
-        internal static extern bool WriteProcessMemory(SafeProcessHandle processHandle, IntPtr baseAddress, IntPtr bufferToWrite, int bufferSize, IntPtr numberOfBytesWrittenBuffer);
+        internal static extern bool WriteProcessMemory(SafeProcessHandle processHandle, IntPtr baseAddress, IntPtr bufferToWrite, int bufferSize, out int numberOfBytesWritten);
 
         // ntdll.dll imports
 
         [DllImport("ntdll.dll", SetLastError = true)]
-        internal static extern Enumerations.NtStatus NtCreateThreadEx(out SafeThreadHandle threadHandle, Enumerations.ThreadAccessMask desiredAccess, IntPtr objectAttributesBuffer, SafeProcessHandle processHandle, IntPtr startAddress, IntPtr parameter, Enumerations.ThreadCreationType creationType, IntPtr stackZeroBits, IntPtr sizeOfStack, IntPtr maximumStackSize, IntPtr attributeListBuffer);
+        internal static extern Enumerations.NtStatus NtCreateThreadEx(out SafeThreadHandle threadHandle, Enumerations.ThreadAccessMask desiredAccess, IntPtr objectAttributesBuffer, SafeProcessHandle processHandle, IntPtr startAddress, IntPtr parameter, Enumerations.ThreadCreationType creationType, int stackZeroBits, int sizeOfStack, int maximumStackSize, IntPtr attributeListBuffer);
 
         [DllImport("ntdll.dll", SetLastError = true)]
-        internal static extern Enumerations.NtStatus NtQueryInformationProcess(SafeProcessHandle processHandle, Enumerations.ProcessInformationClass processInformationClass, IntPtr processInformationBuffer, int bufferSize, IntPtr returnLength);
+        internal static extern Enumerations.NtStatus NtQueryInformationProcess(SafeProcessHandle processHandle, Enumerations.ProcessInformationClass processInformationClass, IntPtr processInformationBuffer, int bufferSize, out int returnLength);
 
         [DllImport("ntdll.dll", SetLastError = true)]
         internal static extern Enumerations.NtStatus RtlCreateUserThread(SafeProcessHandle processHandle, IntPtr securityDescriptorBuffer, bool createSuspended, int stackZeroBits, IntPtr stackReserved, IntPtr stackCommit, IntPtr startAddress, IntPtr parameter, out SafeThreadHandle threadHandle, out IntPtr clientIdBuffer);
@@ -71,9 +74,12 @@ namespace Bleak.Native
         [DllImport("ntdll.dll", SetLastError = true)]
         internal static extern Enumerations.NtStatus RtlGetVersion(out Structures.OsVersionInfo versionInformation);
 
-        // user32.dll functions
+        [DllImport("ntdll.dll")]
+        internal static extern ulong RtlNtStatusToDosError(Enumerations.NtStatus ntStatus);
 
-        [DllImport("user32.dll")]
-        internal static extern void SwitchToThisWindow(IntPtr windowHandle, bool altTab);
+        // user32.dll imports
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool PostThreadMessage(int threadId, Enumerations.WindowsMessage message, Enumerations.VirtualKey wParameter, IntPtr lParameter);
     }
 }

@@ -1,21 +1,22 @@
 using System;
 using System.Text;
 using System.Text.RegularExpressions;
+using Bleak.Injection.Interfaces;
 using Bleak.Injection.Objects;
 using Bleak.Native;
 
 namespace Bleak.Injection.Extensions
 {
-    internal class HideDllFromPeb
+    internal class HideDllFromPeb : IInjectionExtension
     {
         private readonly InjectionWrapper _injectionWrapper;
 
-        internal HideDllFromPeb(InjectionWrapper injectionWrapper)
+        public HideDllFromPeb(InjectionWrapper injectionWrapper)
         {
             _injectionWrapper = injectionWrapper;
         }
 
-        internal bool Call()
+        public bool Call(InjectionContext injectionContext)
         {
             if (_injectionWrapper.RemoteProcess.IsWow64)
             {
@@ -29,7 +30,7 @@ namespace Bleak.Injection.Extensions
 
                     var entryFilePath = filePathRegex.Replace(Encoding.Unicode.GetString(entryFilePathBytes), "SysWOW64");
 
-                    if (entryFilePath.Equals(_injectionWrapper.DllPath, StringComparison.OrdinalIgnoreCase))
+                    if (entryFilePath == _injectionWrapper.DllPath)
                     {
                         // Remove the entry from the doubly linked lists
 
@@ -62,7 +63,7 @@ namespace Bleak.Injection.Extensions
 
                     var entryFilePath = Encoding.Unicode.GetString(entryFilePathBytes);
 
-                    if (entryFilePath.Equals(_injectionWrapper.DllPath, StringComparison.OrdinalIgnoreCase))
+                    if (entryFilePath == _injectionWrapper.DllPath)
                     {
                         // Remove the entry from the doubly linked lists
 

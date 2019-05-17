@@ -5,9 +5,11 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using Bleak.Assembly;
 using Bleak.Handlers;
 using Bleak.Memory;
 using Bleak.Native;
+using Bleak.Native.SafeHandle;
 using Bleak.RemoteProcess.Objects;
 using Bleak.Shared;
 
@@ -21,17 +23,44 @@ namespace Bleak.RemoteProcess
 
         internal readonly Process Process;
 
+        private readonly Assembler _assembler;
+
         private readonly MemoryManager _memoryManager;
 
-        internal ProcessWrapper(Process process, MemoryManager memoryManager)
+        private readonly WindowsVersion _windowsVersion;
+
+        internal ProcessWrapper(int processId, WindowsVersion windowsVersion)
         {
-            Process = process;
+            Process = GetProcess(processId);
 
             IsWow64 = IsProcessWow64();
 
             Modules = new List<Module>();
 
-            _memoryManager = memoryManager;
+            _assembler = new Assembler(IsWow64);
+
+            _memoryManager = new MemoryManager(Process.SafeHandle);
+
+            _windowsVersion = windowsVersion;
+
+            EnableDebuggerPrivileges();
+
+            Modules.AddRange(GetProcessModules());
+        }
+
+        internal ProcessWrapper(string processName, WindowsVersion windowsVersion)
+        {
+            Process = GetProcess(processName);
+
+            IsWow64 = IsProcessWow64();
+
+            Modules = new List<Module>();
+
+            _assembler = new Assembler(IsWow64);
+
+            _memoryManager = new MemoryManager(Process.SafeHandle);
+
+            _windowsVersion = windowsVersion;
 
             EnableDebuggerPrivileges();
 
@@ -48,9 +77,66 @@ namespace Bleak.RemoteProcess
             Process.Dispose();
         }
 
+        internal TStructure CallFunction<TStructure>(IntPtr functionAddress, params ulong[] parameters) where TStructure : struct
+        {
+            // Allocate a buffer in the remote process to store the returned value of the function
+
+            var returnBuffer = _memoryManager.AllocateVirtualMemory<TStructure>();
+
+            // Write the shellcode used to call the function into the remote process
+
+            var shellcode = _assembler.AssembleFunctionCall(functionAddress, returnBuffer, parameters);
+
+            var shellcodeBuffer = _memoryManager.AllocateVirtualMemory(shellcode.Length);
+
+            _memoryManager.WriteVirtualMemory(shellcodeBuffer, shellcode);
+
+            // Create a thread in the remote process to call the shellcode
+
+            SafeThreadHandle threadHandle;
+
+            var ntStatus = _windowsVersion == WindowsVersion.Windows7
+                         ? PInvoke.NtCreateThreadEx(out threadHandle, Enumerations.ThreadAccessMask.AllAccess, IntPtr.Zero, Process.SafeHandle, shellcodeBuffer, IntPtr.Zero, Enumerations.ThreadCreationType.HideFromDebugger, 0, 0, 0, IntPtr.Zero)
+                         : PInvoke.RtlCreateUserThread(Process.SafeHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, shellcodeBuffer, IntPtr.Zero, out threadHandle, out _);
+
+            if (ntStatus != Enumerations.NtStatus.Success)
+            {
+                ExceptionHandler.ThrowWin32Exception("Failed to create a thread in the remote process");
+            }
+
+            PInvoke.WaitForSingleObject(threadHandle, int.MaxValue);
+
+            threadHandle.Dispose();
+
+            _memoryManager.FreeVirtualMemory(shellcodeBuffer);
+
+            try
+            {
+                // Read the returned value of the function from the buffer
+
+                return _memoryManager.ReadVirtualMemory<TStructure>(returnBuffer);
+            }
+
+            finally
+            {
+                _memoryManager.FreeVirtualMemory(returnBuffer);
+            }
+        }
+
+        internal TStructure CallFunction<TStructure>(string moduleName, string functionName, params ulong[] parameters) where TStructure : struct
+        {
+            // Get the address of the function in the remote process
+
+            var functionAddress = GetFunctionAddress(moduleName, functionName);
+
+            // Call the function in the remote process
+
+            return CallFunction<TStructure>(functionAddress, parameters);
+        }
+
         internal IntPtr GetFunctionAddress(string moduleName, string functionName)
         {
-            // Look for the specified module in the module list of the remote process
+            // Look for the module in the module list of the remote process
 
             var processModule = Modules.Find(module => module.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
 
@@ -59,7 +145,7 @@ namespace Bleak.RemoteProcess
                 return IntPtr.Zero;
             }
 
-            // Calculate the address of the specified function
+            // Calculate the address of the function
 
             var function = processModule.PeParser.Value.GetExportedFunctions().Find(exportedFunction => exportedFunction.Name != null && exportedFunction.Name.Equals(functionName, StringComparison.OrdinalIgnoreCase));
 
@@ -115,9 +201,9 @@ namespace Bleak.RemoteProcess
             return functionAddress;
         }
 
-        internal IntPtr GetFunctionAddress(string moduleName, ushort? functionOrdinal)
+        internal IntPtr GetFunctionAddress(string moduleName, ushort functionOrdinal)
         {
-            // Look for the specified module in the module list of the remote process
+            // Look for the module in the module list of the remote process
 
             var processModule = Modules.Find(module => module.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
 
@@ -126,33 +212,60 @@ namespace Bleak.RemoteProcess
                 return IntPtr.Zero;
             }
 
-            // Look for the specified function in the exported functions of the module
+            // Look for the function in the exported functions of the module
 
             var function = processModule.PeParser.Value.GetExportedFunctions().Find(exportedFunction => exportedFunction.Ordinal == functionOrdinal);
 
             return GetFunctionAddress(moduleName, function.Name);
         }
 
-        internal Structures.Peb64 GetPeb()
+        internal Peb GetPeb()
         {
-            // Query the remote process for its basic information
-
-            var basicInformationSize = Marshal.SizeOf<Structures.ProcessBasicInformation>();
-
-            var basicInformationBuffer = Marshal.AllocHGlobal(basicInformationSize);
-
-            if (PInvoke.NtQueryInformationProcess(Process.SafeHandle, Enumerations.ProcessInformationClass.BasicInformation, basicInformationBuffer, basicInformationSize, IntPtr.Zero) != Enumerations.NtStatus.Success)
+            if (IsWow64)
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to query the remote process for its basic information");
+                // Query the remote process for the address of the WOW64 PEB
+
+                var pebAddressBuffer = Marshal.AllocHGlobal(sizeof(ulong));
+
+                if (PInvoke.NtQueryInformationProcess(Process.SafeHandle, Enumerations.ProcessInformationClass.Wow64Information, pebAddressBuffer, sizeof(ulong), out _) != Enumerations.NtStatus.Success)
+                {
+                    ExceptionHandler.ThrowWin32Exception("Failed to query the remote process for the address of the WOW64 PEB");
+                }
+
+                var pebAddress = Marshal.PtrToStructure<ulong>(pebAddressBuffer);
+
+                Marshal.FreeHGlobal(pebAddressBuffer);
+
+                // Read the WOW64 PEB of the remote process
+
+                var peb = _memoryManager.ReadVirtualMemory<Structures.Peb32>((IntPtr) pebAddress);
+
+                return new Peb((IntPtr) peb.ApiSetMap, (IntPtr) peb.Ldr);
             }
 
-            var basicInformation = Marshal.PtrToStructure<Structures.ProcessBasicInformation>(basicInformationBuffer);
+            else
+            {
+                // Query the remote process for its basic information
 
-            Marshal.FreeHGlobal(basicInformationBuffer);
+                var basicInformationSize = Marshal.SizeOf<Structures.ProcessBasicInformation>();
 
-            // Read the PEB of the remote process
+                var basicInformationBuffer = Marshal.AllocHGlobal(basicInformationSize);
 
-            return _memoryManager.ReadVirtualMemory<Structures.Peb64>(basicInformation.PebBaseAddress);
+                if (PInvoke.NtQueryInformationProcess(Process.SafeHandle, Enumerations.ProcessInformationClass.BasicInformation, basicInformationBuffer, basicInformationSize, out _) != Enumerations.NtStatus.Success)
+                {
+                    ExceptionHandler.ThrowWin32Exception("Failed to query the remote process for its basic information");
+                }
+
+                var basicInformation = Marshal.PtrToStructure<Structures.ProcessBasicInformation>(basicInformationBuffer);
+
+                Marshal.FreeHGlobal(basicInformationBuffer);
+
+                // Read the PEB of the remote process
+
+                var peb = _memoryManager.ReadVirtualMemory<Structures.Peb64>(basicInformation.PebBaseAddress);
+
+                return new Peb((IntPtr) peb.ApiSetMap, (IntPtr) peb.Ldr);
+            }
         }
 
         internal IEnumerable<Structures.LdrDataTableEntry64> GetPebEntries()
@@ -163,7 +276,7 @@ namespace Bleak.RemoteProcess
 
             // Read the loader data of the PEB
 
-            var pebLoaderData = _memoryManager.ReadVirtualMemory<Structures.PebLdrData64>((IntPtr) peb.Ldr);
+            var pebLoaderData = _memoryManager.ReadVirtualMemory<Structures.PebLdrData64>(peb.Ldr);
 
             var currentPebEntryAddress = pebLoaderData.InLoadOrderModuleList.Flink;
 
@@ -186,35 +299,15 @@ namespace Bleak.RemoteProcess
             }
         }
 
-        internal Structures.Peb32 GetWow64Peb()
-        {
-            // Query the remote process for the address of the WOW64 PEB
-
-            var pebAddressBuffer = Marshal.AllocHGlobal(sizeof(ulong));
-
-            if (PInvoke.NtQueryInformationProcess(Process.SafeHandle, Enumerations.ProcessInformationClass.Wow64Information, pebAddressBuffer, sizeof(ulong), IntPtr.Zero) != Enumerations.NtStatus.Success)
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to query the remote process for the address of the WOW64 PEB");
-            }
-
-            var pebAddress = Marshal.PtrToStructure<ulong>(pebAddressBuffer);
-
-            Marshal.FreeHGlobal(pebAddressBuffer);
-
-            // Read the WOW64 PEB of the remote process
-
-            return _memoryManager.ReadVirtualMemory<Structures.Peb32>((IntPtr) pebAddress);
-        }
-
         internal IEnumerable<Structures.LdrDataTableEntry32> GetWow64PebEntries()
         {
             // Get the WOW64 PEB of the remote process
 
-            var peb = GetWow64Peb();
+            var peb = GetPeb();
 
             // Read the loader data of the WOW64 PEB
 
-            var pebLoaderData = _memoryManager.ReadVirtualMemory<Structures.PebLdrData32>((IntPtr) peb.Ldr);
+            var pebLoaderData = _memoryManager.ReadVirtualMemory<Structures.PebLdrData32>(peb.Ldr);
 
             var currentPebEntryAddress = pebLoaderData.InLoadOrderModuleList.Flink;
 
@@ -246,7 +339,7 @@ namespace Bleak.RemoteProcess
             Process.Refresh();
         }
 
-        private static void EnableDebuggerPrivileges()
+        private void EnableDebuggerPrivileges()
         {
             try
             {
@@ -256,6 +349,32 @@ namespace Bleak.RemoteProcess
             catch (Win32Exception)
             {
                 // The local process isn't running in administrator mode
+            }
+        }
+
+        private Process GetProcess(int processId)
+        {
+            try
+            {
+                return Process.GetProcessById(processId);
+            }
+
+            catch (ArgumentException)
+            {
+                throw new ArgumentException($"No process with the id {processId} is currently running");
+            }
+        }
+
+        private Process GetProcess(string processName)
+        {
+            try
+            {
+                return Process.GetProcessesByName(processName)[0];
+            }
+
+            catch (IndexOutOfRangeException)
+            {
+                throw new ArgumentException($"No process with the name {processName} is currently running");
             }
         }
 

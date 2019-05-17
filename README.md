@@ -8,7 +8,7 @@ A Windows native DLL injection library written in C# that supports several metho
 
 ### Injection Methods
 
-* CreateRemoteThread
+* CreateThread
 * ManualMap
 * ThreadHijack
 
@@ -38,7 +38,7 @@ The example below describes a basic implementation of the library.
 ```csharp
 using Bleak;
 
-var injector = new Injector(InjectionMethod.CreateRemoteThread, "processName", "pathToDll");
+var injector = new Injector(InjectionMethod.CreateThread, "processName", "pathToDll");
 
 // Inject the DLL into the process
 

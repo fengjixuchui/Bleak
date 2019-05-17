@@ -45,33 +45,8 @@ namespace Bleak.Tools
             return temporaryDllPath;
         }
         
-        internal static string GenerateDllName(byte[] dllBytes)
-        {
-            // Hash the DLL bytes
-
-            byte[] hashedDllBytes;
-
-            using (var hashingService = new SHA256CryptoServiceProvider())
-            {
-                hashedDllBytes = hashingService.ComputeHash(dllBytes);
-            }
-
-            // Create a name for the DLL using a partial hash of the its bytes
-
-            var stringBuilder = new StringBuilder();
-
-            for (var index = 0; index < 14; index += 1)
-            {
-                stringBuilder.Append(hashedDllBytes[index].ToString("X2"));
-            }
-
-            return stringBuilder.Append(".dll").ToString();
-        }
-
         internal static string GenerateRandomDllName()
         {
-            var characterArray = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890".ToCharArray();
-
             // Generate an array of random bytes
 
             var dllNameBytes = new byte[14];
@@ -84,6 +59,8 @@ namespace Bleak.Tools
             // Create a randomised name for the DLL
 
             var stringBuilder = new StringBuilder();
+
+            var characterArray = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890".ToCharArray();
 
             foreach (var @byte in dllNameBytes)
             {

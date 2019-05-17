@@ -1,10 +1,12 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using Bleak.Assembly;
+using Bleak.Handlers;
 using Bleak.Memory;
+using Bleak.Native;
 using Bleak.PortableExecutable;
 using Bleak.RemoteProcess;
+using Bleak.Shared;
 
 namespace Bleak.Injection.Objects
 {
@@ -24,11 +26,11 @@ namespace Bleak.Injection.Objects
 
         internal readonly ProcessWrapper RemoteProcess;
 
+        internal readonly WindowsVersion WindowsVersion;
+
         internal InjectionWrapper(InjectionMethod injectionMethod, int processId, byte[] dllBytes)
         {
-            MemoryManager = new MemoryManager(GetProcess(processId).SafeHandle);
-
-            RemoteProcess = new ProcessWrapper(GetProcess(processId), MemoryManager);
+            RemoteProcess = new ProcessWrapper(processId, WindowsVersion);
 
             Assembler = new Assembler(RemoteProcess.IsWow64);
 
@@ -36,14 +38,16 @@ namespace Bleak.Injection.Objects
 
             InjectionMethod = injectionMethod;
 
+            MemoryManager = new MemoryManager(RemoteProcess.Process.SafeHandle);
+
             PeParser = new PeParser(dllBytes);
+
+            WindowsVersion = GetWindowsVersion();
         }
 
         internal InjectionWrapper(InjectionMethod injectionMethod, int processId, string dllPath)
         {
-            MemoryManager = new MemoryManager(GetProcess(processId).SafeHandle);
-
-            RemoteProcess = new ProcessWrapper(GetProcess(processId), MemoryManager);
+            RemoteProcess = new ProcessWrapper(processId, WindowsVersion);
 
             Assembler = new Assembler(RemoteProcess.IsWow64);
 
@@ -53,14 +57,16 @@ namespace Bleak.Injection.Objects
 
             InjectionMethod = injectionMethod;
 
+            MemoryManager = new MemoryManager(RemoteProcess.Process.SafeHandle);
+
             PeParser = new PeParser(dllPath);
+
+            WindowsVersion = GetWindowsVersion();
         }
 
         internal InjectionWrapper(InjectionMethod injectionMethod, string processName, byte[] dllBytes)
         {
-            MemoryManager = new MemoryManager(GetProcess(processName).SafeHandle);
-
-            RemoteProcess = new ProcessWrapper(GetProcess(processName), MemoryManager);
+            RemoteProcess = new ProcessWrapper(processName, WindowsVersion);
 
             Assembler = new Assembler(RemoteProcess.IsWow64);
 
@@ -68,14 +74,16 @@ namespace Bleak.Injection.Objects
 
             InjectionMethod = injectionMethod;
 
+            MemoryManager = new MemoryManager(RemoteProcess.Process.SafeHandle);
+
             PeParser = new PeParser(dllBytes);
+
+            WindowsVersion = GetWindowsVersion();
         }
 
         internal InjectionWrapper(InjectionMethod injectionMethod, string processName, string dllPath)
         {
-            MemoryManager = new MemoryManager(GetProcess(processName).SafeHandle);
-
-            RemoteProcess = new ProcessWrapper(GetProcess(processName), MemoryManager);
+            RemoteProcess = new ProcessWrapper(processName, WindowsVersion);
 
             Assembler = new Assembler(RemoteProcess.IsWow64);
 
@@ -85,7 +93,11 @@ namespace Bleak.Injection.Objects
 
             InjectionMethod = injectionMethod;
 
+            MemoryManager = new MemoryManager(RemoteProcess.Process.SafeHandle);
+
             PeParser = new PeParser(dllPath);
+
+            WindowsVersion = GetWindowsVersion();
         }
 
         public void Dispose()
@@ -95,29 +107,44 @@ namespace Bleak.Injection.Objects
             RemoteProcess.Dispose();
         }
 
-        private static Process GetProcess(int processId)
+        private WindowsVersion GetWindowsVersion()
         {
-            try
+            if (PInvoke.RtlGetVersion(out var versionInformation) != Enumerations.NtStatus.Success)
             {
-                return Process.GetProcessById(processId);
+                ExceptionHandler.ThrowWin32Exception("Failed to determine the version of Windows");
             }
 
-            catch (ArgumentException)
+            switch (versionInformation.MajorVersion)
             {
-                throw new ArgumentException($"No process with the id {processId} is currently running");
-            }
-        }
+                case 6:
+                {
+                    if (versionInformation.MinorVersion == 1)
+                    {
+                        return WindowsVersion.Windows7;
+                    }
 
-        private static Process GetProcess(string processName)
-        {
-            try
-            {
-                return Process.GetProcessesByName(processName)[0];
-            }
+                    if (versionInformation.MinorVersion == 2)
+                    {
+                        return WindowsVersion.Windows8;
+                    }
 
-            catch (IndexOutOfRangeException)
-            {
-                throw new ArgumentException($"No process with the name {processName} is currently running");
+                    if (versionInformation.MinorVersion == 3)
+                    {
+                        return WindowsVersion.Windows8Point1;
+                    }
+
+                    throw new PlatformNotSupportedException("This library is intended Windows versions >= 7 only");
+                }
+
+                case 10:
+                {
+                    return WindowsVersion.Windows10;
+                }
+
+                default:
+                {
+                    throw new PlatformNotSupportedException("This library is intended Windows versions >= 7 only");
+                }
             }
         }
     }

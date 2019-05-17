@@ -359,6 +359,16 @@ namespace Bleak.Native
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        internal struct ImageRuntimeFunctionEntry
+        {
+            private readonly uint BeginAddress;
+
+            private readonly uint EndAddress;
+
+            private readonly uint UnwindInfoAddress;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         internal struct ImageSectionHeader
         {
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]

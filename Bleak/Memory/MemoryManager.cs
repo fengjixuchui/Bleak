@@ -91,7 +91,7 @@ namespace Bleak.Memory
 
             var bytesReadBuffer = Marshal.AllocHGlobal(bytesToRead);
 
-            if (!PInvoke.ReadProcessMemory(_processHandle, baseAddress, bytesReadBuffer, bytesToRead, IntPtr.Zero))
+            if (!PInvoke.ReadProcessMemory(_processHandle, baseAddress, bytesReadBuffer, bytesToRead, out _))
             {
                 ExceptionHandler.ThrowWin32Exception("Failed to read virtual memory from the remote process");
             }
@@ -113,7 +113,7 @@ namespace Bleak.Memory
 
             var structureBuffer = Marshal.AllocHGlobal(structureSize);
 
-            if (!PInvoke.ReadProcessMemory(_processHandle, baseAddress, structureBuffer, structureSize, IntPtr.Zero))
+            if (!PInvoke.ReadProcessMemory(_processHandle, baseAddress, structureBuffer, structureSize, out _))
             {
                 ExceptionHandler.ThrowWin32Exception("Failed to read virtual memory from the remote process");
             }
@@ -135,7 +135,7 @@ namespace Bleak.Memory
 
             var bytesToWriteHandle = GCHandle.Alloc(bytesToWrite, GCHandleType.Pinned);
 
-            if (!PInvoke.WriteProcessMemory(_processHandle, baseAddress, bytesToWriteHandle.AddrOfPinnedObject(), bytesToWrite.Length, IntPtr.Zero))
+            if (!PInvoke.WriteProcessMemory(_processHandle, baseAddress, bytesToWriteHandle.AddrOfPinnedObject(), bytesToWrite.Length, out _))
             {
                 ExceptionHandler.ThrowWin32Exception("Failed to write virtual memory in the remote process");
             }
@@ -161,7 +161,7 @@ namespace Bleak.Memory
 
             Marshal.StructureToPtr(structureToWrite, structureBuffer, false);
 
-            if (!PInvoke.WriteProcessMemory(_processHandle, baseAddress, structureBuffer, structureSize, IntPtr.Zero))
+            if (!PInvoke.WriteProcessMemory(_processHandle, baseAddress, structureBuffer, structureSize, out _))
             {
                 ExceptionHandler.ThrowWin32Exception("Failed to write virtual memory in the remote process");
             }

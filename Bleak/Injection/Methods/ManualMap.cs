@@ -7,7 +7,6 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Bleak.Injection.Interfaces;
 using Bleak.Injection.Objects;
-using Bleak.Injection.Tools;
 using Bleak.Native;
 using Bleak.Shared;
 
@@ -15,8 +14,6 @@ namespace Bleak.Injection.Methods
 {
     internal class ManualMap : IInjectionMethod
     {
-        private readonly InjectionTools _injectionTools;
-
         private readonly InjectionWrapper _injectionWrapper;
 
         private IntPtr _localDllAddress;
@@ -25,8 +22,6 @@ namespace Bleak.Injection.Methods
 
         public ManualMap(InjectionWrapper injectionWrapper)
         {
-            _injectionTools = new InjectionTools(injectionWrapper);
-
             _injectionWrapper = injectionWrapper;
         }
 
@@ -56,12 +51,12 @@ namespace Bleak.Injection.Methods
 
             try
             {
-                _remoteDllAddress = _injectionWrapper.MemoryManager.AllocateVirtualMemory((IntPtr) preferredBaseAddress, (int) dllSize);
+                _remoteDllAddress = _injectionWrapper.MemoryManager.AllocateVirtualMemory((IntPtr)preferredBaseAddress, (int)dllSize);
             }
 
             catch (Win32Exception)
             {
-                _remoteDllAddress = _injectionWrapper.MemoryManager.AllocateVirtualMemory((int) dllSize);
+                _remoteDllAddress = _injectionWrapper.MemoryManager.AllocateVirtualMemory((int)dllSize);
             }
 
             // Relocate the DLL in the local process
@@ -75,6 +70,10 @@ namespace Bleak.Injection.Methods
             // Map the headers of the DLL into the remote process
 
             MapHeaders();
+
+            // Enable exception handling within the DLL
+
+            EnableExceptionHandling();
 
             // Call any TLS callbacks
 
@@ -137,7 +136,7 @@ namespace Bleak.Injection.Methods
                 {
                     // Load the DLL into the remote process
 
-                    using (var injector = new Injector(InjectionMethod.CreateRemoteThread, _injectionWrapper.RemoteProcess.Process.Id, Path.Combine(systemFolderPath, dll.Key)))
+                    using (var injector = new Injector(InjectionMethod.CreateThread, _injectionWrapper.RemoteProcess.Process.Id, Path.Combine(systemFolderPath, dll.Key)))
                     {
                         injector.InjectDll();
                     }
@@ -164,9 +163,10 @@ namespace Bleak.Injection.Methods
 
         private void CallEntryPoint(IntPtr entryPointAddress)
         {
-            // Call the entry point of the DLL or TLS callback with DllProcessAttach in the remote process
-
-            _injectionTools.CallRemoteFunction(entryPointAddress, (ulong) _remoteDllAddress, Constants.DllProcessAttach, 0);
+            if (!_injectionWrapper.RemoteProcess.CallFunction<bool>(entryPointAddress, (ulong) _remoteDllAddress, Constants.DllProcessAttach, 0))
+            {
+                throw new Win32Exception("Failed to call DllMain in the remote process");
+            }
         }
 
         private void CallTlsCallbacks()
@@ -177,15 +177,38 @@ namespace Bleak.Injection.Methods
             }
         }
 
+        private void EnableExceptionHandling()
+        {
+            if (_injectionWrapper.RemoteProcess.IsWow64)
+            {
+                return;
+            }
+
+            // Calculate the address of the exception table
+
+            var exceptionTable = _injectionWrapper.PeParser.GetPeHeaders().NtHeaders64.OptionalHeader.DataDirectory[3];
+
+            var exceptionTableAddress = _remoteDllAddress.AddOffset(exceptionTable.VirtualAddress);
+
+            // Calculate the amount of entries in the exception table
+
+            var exceptionTableAmount = exceptionTable.Size / Marshal.SizeOf<Structures.ImageRuntimeFunctionEntry>();
+
+            // Add the exception table to the dynamic function table of the remote process
+
+            if (!_injectionWrapper.RemoteProcess.CallFunction<bool>("kernel32.dll", "RtlAddFunctionTable", (ulong) exceptionTableAddress, (uint) exceptionTableAmount, (ulong) _remoteDllAddress))
+            {
+                throw new Win32Exception("Failed to add an exception table to the dynamic function table of the remote process");
+            }
+        }
+
         private List<ApiSetMapping> GetApiSetMappings()
         {
             var apiSetMappings = new List<ApiSetMapping>();
 
             // Read the namespace of the API set
 
-            var apiSetDataAddress = _injectionWrapper.RemoteProcess.IsWow64
-                                  ? (IntPtr) _injectionWrapper.RemoteProcess.GetWow64Peb().ApiSetMap
-                                  : (IntPtr) _injectionWrapper.RemoteProcess.GetPeb().ApiSetMap;
+            var apiSetDataAddress = _injectionWrapper.RemoteProcess.GetPeb().ApiSetMap;
 
             var apiSetNamespace = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ApiSetNamespace>(apiSetDataAddress);
 
@@ -217,7 +240,7 @@ namespace Bleak.Injection.Methods
             return apiSetMappings;
         }
 
-        private static Enumerations.MemoryProtection GetSectionProtection(Enumerations.SectionCharacteristics sectionCharacteristics)
+        private Enumerations.MemoryProtection GetSectionProtection(Enumerations.SectionCharacteristics sectionCharacteristics)
         {
             // Determine the protection of the section
 
@@ -354,7 +377,7 @@ namespace Bleak.Injection.Methods
 
             if (delta == 0)
             {
-                // The DLL is loaded at its preferred base address and no relocations need to be applied
+                // The DLL is loaded at its preferred base address then no relocations need to be applied
 
                 return;
             }

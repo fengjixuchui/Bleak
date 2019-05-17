@@ -13,7 +13,7 @@ namespace Bleak.Assembly
             _isWow64 = isWow64;
         }
 
-        internal byte[] AssembleFunctionCall(IntPtr functionAddress, params ulong[] parameters)
+        internal byte[] AssembleFunctionCall(IntPtr functionAddress, IntPtr returnBuffer, params ulong[] parameters)
         {
             var shellcode = new List<byte>();
 
@@ -47,6 +47,12 @@ namespace Bleak.Assembly
                 // call eax
 
                 shellcode.AddRange(new byte[] { 0xFF, 0xD0 });
+
+                // mov [returnBuffer], eax
+
+                shellcode.Add(0xA3);
+
+                shellcode.AddRange(BitConverter.GetBytes((uint) returnBuffer));
 
                 // xor eax, eax
 
@@ -155,8 +161,6 @@ namespace Bleak.Assembly
 
                         default:
                         {
-                            var tempOperand = new List<byte>();
-
                             if (parameters[index] < uint.MaxValue)
                             {
                                 if (parameters[index] <= 0x7F)
@@ -178,18 +182,20 @@ namespace Bleak.Assembly
 
                             else
                             {
+                                var temporaryOperation = new List<byte>();
+
                                 // mov rax, parameter
 
-                                tempOperand.AddRange(new byte[] { 0x48, 0xB8 });
+                                temporaryOperation.AddRange(new byte[] { 0x48, 0xB8 });
 
-                                tempOperand.AddRange(BitConverter.GetBytes(parameters[index]));
+                                temporaryOperation.AddRange(BitConverter.GetBytes(parameters[index]));
 
                                 // push rax
 
-                                tempOperand.Add(0x50);
-                            }
+                                temporaryOperation.Add(0x50);
 
-                            stackParameters.InsertRange(0, tempOperand);
+                                stackParameters.InsertRange(0, temporaryOperation);
+                            }
 
                             break;
                         }
@@ -210,6 +216,12 @@ namespace Bleak.Assembly
 
                 shellcode.AddRange(new byte[] { 0xFF, 0xD0 });
 
+                // mov [returnBuffer], rax
+
+                shellcode.AddRange(new byte[] { 0x48, 0xA3 });
+
+                shellcode.AddRange(BitConverter.GetBytes((ulong) returnBuffer));
+
                 // xor eax, eax
 
                 shellcode.AddRange(new byte[] { 0x31, 0xC0 });
@@ -226,7 +238,7 @@ namespace Bleak.Assembly
             return shellcode.ToArray();
         }
 
-        internal byte[] AssembleThreadHijackFunctionCall(IntPtr functionAddress, params ulong[] parameters)
+        internal byte[] AssembleThreadFunctionCall(IntPtr functionAddress, IntPtr returnBuffer, params ulong[] parameters)
         {
             var shellcode = new List<byte>();
 
@@ -268,6 +280,12 @@ namespace Bleak.Assembly
                 // call eax
 
                 shellcode.AddRange(new byte[] { 0xFF, 0xD0 });
+
+                // mov [returnBuffer], eax
+
+                shellcode.Add(0xA3);
+
+                shellcode.AddRange(BitConverter.GetBytes((uint) returnBuffer));
 
                 // popa
 
@@ -416,8 +434,6 @@ namespace Bleak.Assembly
 
                         default:
                         {
-                            var tempOperand = new List<byte>();
-
                             if (parameters[index] < uint.MaxValue)
                             {
                                 if (parameters[index] <= 0x7F)
@@ -439,18 +455,20 @@ namespace Bleak.Assembly
 
                             else
                             {
+                                var temporaryOperation = new List<byte>();
+
                                 // mov rax, parameter
 
-                                tempOperand.AddRange(new byte[] { 0x48, 0xB8 });
+                                temporaryOperation.AddRange(new byte[] { 0x48, 0xB8 });
 
-                                tempOperand.AddRange(BitConverter.GetBytes(parameters[index]));
+                                temporaryOperation.AddRange(BitConverter.GetBytes(parameters[index]));
 
                                 // push rax
 
-                                tempOperand.Add(0x50);
-                            }
+                                temporaryOperation.Add(0x50);
 
-                            stackParameters.InsertRange(0, tempOperand);
+                                stackParameters.InsertRange(0, temporaryOperation);
+                            }
 
                             break;
                         }
@@ -470,6 +488,12 @@ namespace Bleak.Assembly
                 // call rax
 
                 shellcode.AddRange(new byte[] { 0xFF, 0xD0 });
+
+                // mov [returnBuffer], rax
+
+                shellcode.AddRange(new byte[] { 0x48, 0xA3 });
+
+                shellcode.AddRange(BitConverter.GetBytes((ulong) returnBuffer));
 
                 // add rsp, 0x28
 

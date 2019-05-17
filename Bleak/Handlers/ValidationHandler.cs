@@ -7,18 +7,18 @@ namespace Bleak.Handlers
 {
     internal static class ValidationHandler
     {
-        internal static void ValidateDllArchitecture(InjectionWrapper injectionProperties)
+        internal static void ValidateDllArchitecture(InjectionWrapper injectionWrapper)
         {
             // Ensure the architecture of the remote process matches the architecture of the DLL
 
-            if (injectionProperties.RemoteProcess.IsWow64 != (injectionProperties.PeParser.GetArchitecture() == Enumerations.MachineType.X86))
+            if (injectionWrapper.RemoteProcess.IsWow64 != (injectionWrapper.PeParser.GetArchitecture() == Enumerations.MachineType.X86))
             {
                 throw new ApplicationException("The architecture of the remote process did not match the architecture of the DLL");
             }
 
             // Ensure that x64 injection is not being attempted from an x86 build
 
-            if (!Environment.Is64BitProcess && !injectionProperties.RemoteProcess.IsWow64)
+            if (!Environment.Is64BitProcess && !injectionWrapper.RemoteProcess.IsWow64)
             {
                 throw new ApplicationException("x64 injection is not supported when compiled under x86");
             }

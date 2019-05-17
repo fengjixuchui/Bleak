@@ -23,7 +23,7 @@ namespace Bleak.Tests
         {
             _dllPath = Path.Combine(Path.GetFullPath(@"..\..\..\Etc\"), "TestDll.dll");
 
-            _process = new Process { StartInfo = { FileName = "notepad.exe", UseShellExecute = true } };
+            _process = new Process { StartInfo = { CreateNoWindow = true, FileName = "notepad.exe", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden } };
 
             _process.Start();
 
@@ -33,14 +33,14 @@ namespace Bleak.Tests
         [Fact]
         public void TestCreateRemoteThread()
         {
-            using (var injector = new Injector(InjectionMethod.CreateRemoteThread, _process.Id, _dllPath))
+            using (var injector = new Injector(InjectionMethod.CreateThread, _process.Id, _dllPath))
             {
                 injector.InjectDll();
             }
 
             _process.Refresh();
 
-            Assert.True(_process.Modules.Cast<ProcessModule>().Any(module => module.FileName == _dllPath));
+            Assert.Contains(_process.Modules.Cast<ProcessModule>(), module => module.FileName == _dllPath);
         }
 
         [Fact]
@@ -62,7 +62,7 @@ namespace Bleak.Tests
 
             _process.Refresh();
 
-            Assert.True(_process.Modules.Cast<ProcessModule>().Any(module => module.FileName == _dllPath));
+            Assert.Contains(_process.Modules.Cast<ProcessModule>(), module => module.FileName == _dllPath);
         }
     }
 }

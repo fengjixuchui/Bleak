@@ -16,27 +16,25 @@ namespace Bleak.Native
         {
             Control = 0x10001
         }
-        
+
         [Flags]
         internal enum FileCharacteristics : ushort
         {
-            RelocationsStripped = 0x01,
             Dll = 0x2000
         }
-        
+
         [Flags]
         internal enum FreeType
         {
             Release = 0x8000
         }
-        
+
         [Flags]
         internal enum MachineType : ushort
         {
-            X86 = 0x14C,
-            X64 = 0x8664
+            X86 = 0x14C
         }
-        
+
         [Flags]
         internal enum MemoryProtection
         {
@@ -52,27 +50,27 @@ namespace Bleak.Native
             NoCache = 0x200,
             WriteCombine = 0x400
         }
-        
+
         [Flags]
         internal enum NtStatus : uint
         {
             Success = 0x00
         }
-        
+
         [Flags]
         internal enum ProcessInformationClass
         {
             BasicInformation = 0x00,
             Wow64Information = 0x1A
         }
-        
+
         [Flags]
         internal enum RelocationType : byte
         {
             HighLow = 0x03,
             Dir64 = 0x0A
         }
-        
+
         [Flags]
         internal enum SectionCharacteristics : uint
         {
@@ -81,7 +79,7 @@ namespace Bleak.Native
             MemoryRead = 0x040000000,
             MemoryWrite = 0x080000000
         }
-        
+
         [Flags]
         internal enum ThreadAccessMask
         {
@@ -94,6 +92,18 @@ namespace Bleak.Native
         internal enum ThreadCreationType
         {
             HideFromDebugger = 0x04
+        }
+
+        [Flags]
+        internal enum VirtualKey
+        {
+            LeftButton = 0x01
+        }
+
+        [Flags]
+        internal enum WindowsMessage
+        {
+            Keydown = 0x100
         }
     }
 }

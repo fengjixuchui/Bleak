@@ -8,11 +8,6 @@ namespace Bleak.Native.SafeHandle
     {
         private SafeThreadHandle() : base(true) { }
 
-        internal SafeThreadHandle(IntPtr threadHandle, bool ownsHandle) : base(ownsHandle)
-        {
-            SetHandle(threadHandle);
-        }
-
         protected override bool ReleaseHandle()
         {
             if (handle == IntPtr.Zero)
@@ -22,7 +17,7 @@ namespace Bleak.Native.SafeHandle
 
             if (!PInvoke.CloseHandle(handle))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to close a handle to a thread in the process");
+                ExceptionHandler.ThrowWin32Exception("Failed to close a handle to a thread in the remote process");
             }
 
             return true;

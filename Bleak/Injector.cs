@@ -6,9 +6,9 @@ using Bleak.Tools;
 
 namespace Bleak
 {
-    public class Injector: IDisposable
+    public class Injector : IDisposable
     {
-        private readonly InjectionContext _injectionContext;
+        private readonly InjectionManager _injectionManager;
 
         public Injector(InjectionMethod injectionMethod, int processId, byte[] dllBytes)
         {
@@ -23,9 +23,9 @@ namespace Bleak
                 throw new ArgumentException("One or more of the arguments provided were invalid");
             }
 
-            _injectionContext = injectionMethod == InjectionMethod.ManualMap
-                              ? new InjectionContext(injectionMethod, processId, dllBytes)
-                              : new InjectionContext(injectionMethod, processId, DllTools.CreateTemporaryDll(DllTools.GenerateDllName(dllBytes), dllBytes));
+            _injectionManager = injectionMethod == InjectionMethod.ManualMap
+                              ? new InjectionManager(injectionMethod, processId, dllBytes)
+                              : new InjectionManager(injectionMethod, processId, DllTools.CreateTemporaryDll(DllTools.GenerateRandomDllName(), dllBytes));
         }
 
         public Injector(InjectionMethod injectionMethod, int processId, string dllPath, bool randomiseDllName = false)
@@ -45,7 +45,7 @@ namespace Bleak
 
             if (!File.Exists(dllPath) || Path.GetExtension(dllPath) != ".dll")
             {
-                throw new ArgumentException("No DLL file exists at the provided path");
+                throw new ArgumentException("No DLL exists at the provided path");
             }
 
             if (randomiseDllName)
@@ -54,12 +54,12 @@ namespace Bleak
 
                 var temporaryDllPath = DllTools.CreateTemporaryDll(DllTools.GenerateRandomDllName(), File.ReadAllBytes(dllPath));
 
-                _injectionContext = new InjectionContext(injectionMethod, processId, temporaryDllPath);
+                _injectionManager = new InjectionManager(injectionMethod, processId, temporaryDllPath);
             }
 
             else
             {
-                _injectionContext = new InjectionContext(injectionMethod, processId, dllPath);
+                _injectionManager = new InjectionManager(injectionMethod, processId, dllPath);
             }
         }
 
@@ -76,9 +76,9 @@ namespace Bleak
                 throw new ArgumentException("One or more of the arguments provided were invalid");
             }
 
-            _injectionContext = injectionMethod == InjectionMethod.ManualMap
-                              ? new InjectionContext(injectionMethod, processName, dllBytes)
-                              : new InjectionContext(injectionMethod, processName, DllTools.CreateTemporaryDll(DllTools.GenerateDllName(dllBytes), dllBytes));
+            _injectionManager = injectionMethod == InjectionMethod.ManualMap
+                              ? new InjectionManager(injectionMethod, processName, dllBytes)
+                              : new InjectionManager(injectionMethod, processName, DllTools.CreateTemporaryDll(DllTools.GenerateRandomDllName(), dllBytes));
         }
 
         public Injector(InjectionMethod injectionMethod, string processName, string dllPath, bool randomiseDllName = false)
@@ -98,7 +98,7 @@ namespace Bleak
 
             if (!File.Exists(dllPath) || Path.GetExtension(dllPath) != ".dll")
             {
-                throw new ArgumentException("No DLL file exists at the provided path");
+                throw new ArgumentException("No DLL exists at the provided path");
             }
 
             if (randomiseDllName)
@@ -107,45 +107,38 @@ namespace Bleak
 
                 var temporaryDllPath = DllTools.CreateTemporaryDll(DllTools.GenerateRandomDllName(), File.ReadAllBytes(dllPath));
 
-                _injectionContext = new InjectionContext(injectionMethod, processName, temporaryDllPath);
+                _injectionManager = new InjectionManager(injectionMethod, processName, temporaryDllPath);
             }
 
             else
             {
-                _injectionContext = new InjectionContext(injectionMethod, processName, dllPath);
+                _injectionManager = new InjectionManager(injectionMethod, processName, dllPath);
             }
         }
 
         public void Dispose()
         {
-            _injectionContext.Dispose();
+            _injectionManager.Dispose();
         }
 
         public bool EjectDll()
         {
-            return _injectionContext.EjectDll();
+            return _injectionManager.EjectDll();
         }
 
         public bool HideDllFromPeb()
         {
-            return _injectionContext.HideDllFromPeb();
+            return _injectionManager.HideDllFromPeb();
         }
 
         public IntPtr InjectDll()
         {
-            return _injectionContext.InjectDll();
+            return _injectionManager.InjectDll();
         }
 
         public bool RandomiseDllHeaders()
         {
-            return _injectionContext.RandomiseDllHeaders();
+            return _injectionManager.RandomiseDllHeaders();
         }
-    }
-
-    public enum InjectionMethod
-    {
-        CreateRemoteThread,
-        ManualMap,
-        ThreadHijack
     }
 }
