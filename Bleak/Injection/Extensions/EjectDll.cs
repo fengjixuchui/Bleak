@@ -34,18 +34,18 @@ namespace Bleak.Injection.Extensions
 
                 var exceptionTableAddress = dllBaseAddress.AddOffset(exceptionTable.VirtualAddress);
 
-                // Remove the exception table from the dynamic function table of the remote process
-
-                if (!_injectionWrapper.RemoteProcess.CallFunction<bool>("kernel32.dll", "RtlDeleteFunctionTable", (ulong) exceptionTableAddress))
-                {
-                    throw new Win32Exception("Failed to remove an exception table from the dynamic function table of the remote process");
-                }
-
                 // Call the DllMain function of the DLL with DllProcessDetach in the remote process
 
                 if (!_injectionWrapper.RemoteProcess.CallFunction<bool>(dllEntryPointAddress, (ulong) dllBaseAddress, Constants.DllProcessDetach, 0))
                 {
                     throw new Win32Exception("Failed to call DllMain in the remote process");
+                }
+
+                // Remove the exception table from the dynamic function table of the remote process
+
+                if (!_injectionWrapper.RemoteProcess.CallFunction<bool>("kernel32.dll", "RtlDeleteFunctionTable", (ulong) exceptionTableAddress))
+                {
+                    throw new Win32Exception("Failed to remove an exception table from the dynamic function table of the remote process");
                 }
 
                 // Free the memory previously allocated for the DLL in the remote process
