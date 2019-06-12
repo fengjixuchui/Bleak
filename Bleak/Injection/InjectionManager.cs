@@ -1,16 +1,16 @@
 using System;
 using System.Collections.Generic;
-using Bleak.Handlers;
 using Bleak.Injection.Extensions;
 using Bleak.Injection.Interfaces;
 using Bleak.Injection.Objects;
+using Bleak.Shared.Handlers;
 
 namespace Bleak.Injection
 {
     internal class InjectionManager : IDisposable
     {
         private readonly InjectionContext _injectionContext;
-
+        
         private readonly Dictionary<string, IInjectionExtension> _injectionExtensionCache;
 
         private readonly IInjectionMethod _injectionMethod;
@@ -20,20 +20,20 @@ namespace Bleak.Injection
         internal InjectionManager(InjectionMethod injectionMethod, int processId, byte[] dllBytes)
         {
             _injectionContext = new InjectionContext();
-
+            
             _injectionWrapper = new InjectionWrapper(injectionMethod, processId, dllBytes);
-
+            
             _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
             {
-                { "EjectDll", new EjectDll(_injectionWrapper) },
-                { "HideDllFromPeb", new HideDllFromPeb(_injectionWrapper) },
-                { "RandomiseDllHeaders", new RandomiseDllHeaders(_injectionWrapper) }
+                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
+                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
+                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
             };
 
             var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
 
             _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-
+            
             // Ensure the architecture of the DLL is valid
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
@@ -42,20 +42,20 @@ namespace Bleak.Injection
         internal InjectionManager(InjectionMethod injectionMethod, int processId, string dllPath)
         {
             _injectionContext = new InjectionContext();
-
+            
             _injectionWrapper = new InjectionWrapper(injectionMethod, processId, dllPath);
-
+            
             _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
             {
-                { "EjectDll", new EjectDll(_injectionWrapper) },
-                { "HideDllFromPeb", new HideDllFromPeb(_injectionWrapper) },
-                { "RandomiseDllHeaders", new RandomiseDllHeaders(_injectionWrapper) }
+                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
+                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
+                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
             };
-
+            
             var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
 
             _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-
+            
             // Ensure the architecture of the DLL is valid
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
@@ -64,20 +64,20 @@ namespace Bleak.Injection
         internal InjectionManager(InjectionMethod injectionMethod, string processName, byte[] dllBytes)
         {
             _injectionContext = new InjectionContext();
-
+            
             _injectionWrapper = new InjectionWrapper(injectionMethod, processName, dllBytes);
-
+            
             _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
             {
-                { "EjectDll", new EjectDll(_injectionWrapper) },
-                { "HideDllFromPeb", new HideDllFromPeb(_injectionWrapper) },
-                { "RandomiseDllHeaders", new RandomiseDllHeaders(_injectionWrapper) }
+                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
+                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
+                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
             };
-
+            
             var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
 
             _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-
+            
             // Ensure the architecture of the DLL is valid
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
@@ -86,30 +86,30 @@ namespace Bleak.Injection
         internal InjectionManager(InjectionMethod injectionMethod, string processName, string dllPath)
         {
             _injectionContext = new InjectionContext();
-
+            
             _injectionWrapper = new InjectionWrapper(injectionMethod, processName, dllPath);
-
+            
             _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
             {
-                { "EjectDll", new EjectDll(_injectionWrapper) },
-                { "HideDllFromPeb", new HideDllFromPeb(_injectionWrapper) },
-                { "RandomiseDllHeaders", new RandomiseDllHeaders(_injectionWrapper) }
+                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
+                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
+                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
             };
-
+            
             var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
 
             _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-
+            
             // Ensure the architecture of the DLL is valid
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
         }
-
+        
         public void Dispose()
         {
             _injectionWrapper.Dispose();
         }
-
+        
         internal bool EjectDll()
         {
             if (!_injectionContext.Injected)
@@ -117,28 +117,28 @@ namespace Bleak.Injection
                 return true;
             }
 
-            if (_injectionExtensionCache["EjectDll"].Call(_injectionContext))
+            if (_injectionExtensionCache[nameof(EjectDll)].Call(_injectionContext))
             {
                 _injectionContext.DllBaseAddress = IntPtr.Zero;
 
                 _injectionContext.Injected = false;
             }
-
+            
             return !_injectionContext.Injected;
         }
-
+        
         internal bool HideDllFromPeb()
         {
-            if (_injectionContext.PebEntryHidden || !_injectionContext.Injected || _injectionWrapper.InjectionMethod == InjectionMethod.ManualMap)
+            if (_injectionContext.PebEntryHidden || !_injectionContext.Injected || _injectionWrapper.InjectionMethod == InjectionMethod.Manual)
             {
                 return true;
             }
 
-            if(_injectionExtensionCache["HideDllFromPeb"].Call(_injectionContext))
+            if (_injectionExtensionCache[nameof(HideDllFromPeb)].Call(_injectionContext))
             {
                 _injectionContext.PebEntryHidden = true;
             }
-
+            
             return _injectionContext.PebEntryHidden;
         }
 
@@ -148,16 +148,16 @@ namespace Bleak.Injection
             {
                 return _injectionContext.DllBaseAddress;
             }
-
+            
             _injectionContext.DllBaseAddress = _injectionMethod.Call();
-
+            
             if (_injectionContext.DllBaseAddress != IntPtr.Zero)
             {
-                _injectionWrapper.RemoteProcess.Refresh();
+                _injectionWrapper.ProcessManager.Refresh();
                 
                 _injectionContext.Injected = true;
             }
-
+            
             return _injectionContext.DllBaseAddress;
         }
 
@@ -168,7 +168,7 @@ namespace Bleak.Injection
                 return true;
             }
 
-            if(_injectionExtensionCache["RandomiseDllHeaders"].Call(_injectionContext))
+            if(_injectionExtensionCache[nameof(RandomiseDllHeaders)].Call(_injectionContext))
             {
                 _injectionContext.HeadersRandomised = true;
             }

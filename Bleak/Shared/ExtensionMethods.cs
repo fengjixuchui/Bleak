@@ -8,7 +8,7 @@ namespace Bleak.Shared
         {
             return (IntPtr) ((long) pointer + offset);
         }
-
+        
         internal static IntPtr AddOffset(this IntPtr pointer, ulong offset)
         {
             return (IntPtr) ((ulong) pointer + offset);

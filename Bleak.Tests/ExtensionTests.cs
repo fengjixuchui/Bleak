@@ -11,25 +11,25 @@ namespace Bleak.Tests
         private readonly string _dllPath;
 
         private readonly Process _process;
+        
+        public ExtensionTests()
+        {
+            _dllPath = Path.Combine(Path.GetFullPath(@"..\..\..\Etc\"), "TestDll.dll");
 
+            _process = new Process {StartInfo = {CreateNoWindow = true, FileName = "notepad.exe", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden}};
+
+            _process.Start();
+
+            _process.WaitForInputIdle();
+        }
+        
         public void Dispose()
         {
             _process.Kill();
 
             _process.Dispose();
         }
-
-        public ExtensionTests()
-        {
-            _dllPath = Path.Combine(Path.GetFullPath(@"..\..\..\Etc\"), "TestDll.dll");
-
-            _process = new Process { StartInfo = { CreateNoWindow = true, FileName = "notepad.exe", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden } };
-
-            _process.Start();
-
-            _process.WaitForInputIdle();
-        }
-
+        
         [Fact]
         public void TestEjectDll()
         {
@@ -44,7 +44,7 @@ namespace Bleak.Tests
 
             Assert.DoesNotContain(_process.Modules.Cast<ProcessModule>(), module => module.FileName == _dllPath);
         }
-
+        
         [Fact]
         public void TestHideDllFromPeb()
         {
@@ -59,7 +59,7 @@ namespace Bleak.Tests
 
             Assert.DoesNotContain(_process.Modules.Cast<ProcessModule>(), module => module.FileName == _dllPath);
         }
-
+        
         [Fact]
         public void RandomiseDllHeaders()
         {

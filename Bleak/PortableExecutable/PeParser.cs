@@ -1,524 +1,357 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
-using Bleak.Native;
 using Bleak.PortableExecutable.Objects;
 using Bleak.Shared;
+using static Bleak.Native.Constants;
+using static Bleak.Native.Enumerations;
+using static Bleak.Native.Structures;
 
 namespace Bleak.PortableExecutable
 {
-    internal class PeParser : IDisposable
+    internal class PeParser
     {
-        private readonly IntPtr _dllBuffer;
+        internal readonly PEHeaders PeHeaders;
+        
+        internal readonly List<BaseRelocation> BaseRelocations;
+        
+        internal readonly CodeViewDebugDirectoryData DebugData;
+        
+        internal readonly List<ExportedFunction> ExportedFunctions;
+        
+        internal readonly List<ImportedFunction> ImportedFunctions;
+        
+        internal readonly List<TlsCallback> TlsCallbacks;
 
-        private readonly GCHandle _dllBufferHandle;
-
-        private readonly PeHeaders _peHeaders;
-
+        private readonly IntPtr _peBuffer;
+        
         internal PeParser(byte[] dllBytes)
         {
-            _dllBufferHandle = GCHandle.Alloc(dllBytes.Clone(), GCHandleType.Pinned);
+            using (var peReader = new PEReader(new MemoryStream(dllBytes)))
+            {
+                DebugData = peReader.ReadCodeViewDebugDirectoryData(peReader.ReadDebugDirectory()[0]);
+                
+                PeHeaders = peReader.PEHeaders;
+            }
             
-            _dllBuffer = _dllBufferHandle.AddrOfPinnedObject();
+            var peBufferHandle = GCHandle.Alloc(dllBytes, GCHandleType.Pinned);
 
-            _peHeaders = new PeHeaders();
-
-            ReadPeHeaders();
-        }
-
-        internal PeParser(string dllPath)
-        {
-            _dllBufferHandle = GCHandle.Alloc(File.ReadAllBytes(dllPath), GCHandleType.Pinned);
-
-            _dllBuffer = _dllBufferHandle.AddrOfPinnedObject();
-
-            _peHeaders = new PeHeaders();
-
-            ReadPeHeaders();
-        }
-
-        public void Dispose()
-        {
-            _dllBufferHandle.Free();
-        }
-
-        internal Enumerations.MachineType GetArchitecture()
-        {
-            return _peHeaders.FileHeader.Machine;
-        }
-
-        internal List<BaseRelocation> GetBaseRelocations()
-        {
-            var baseRelocations = new List<BaseRelocation>();
-
-            // Calculate the offset of the base relocation table
-
-            var baseRelocationTableRva = _peHeaders.FileHeader.Machine == Enumerations.MachineType.X86
-                                       ? _peHeaders.NtHeaders32.OptionalHeader.DataDirectory[5].VirtualAddress
-                                       : _peHeaders.NtHeaders64.OptionalHeader.DataDirectory[5].VirtualAddress;
-
-            if (baseRelocationTableRva == 0)
-            {
-                // The DLL has no base relocations
-
-                return baseRelocations;
-            }
-
-            var baseRelocationTableOffset = ConvertRvaToOffset(baseRelocationTableRva);
-
-            while (true)
-            {
-                // Read the base relocation
-
-                var baseRelocation = Marshal.PtrToStructure<Structures.ImageBaseRelocation>(_dllBuffer.AddOffset(baseRelocationTableOffset));
-
-                if (baseRelocation.SizeOfBlock == 0)
-                {
-                    break;
-                }
-
-                // Calculate the offset of the relocations
-
-                var relocationsOffset = baseRelocationTableOffset + (uint) Marshal.SizeOf<Structures.ImageBaseRelocation>();
-
-                // Calculate the amount of relocations in the base relocation
-
-                var relocationAmount = (baseRelocation.SizeOfBlock - Marshal.SizeOf<Structures.ImageBaseRelocation>()) / sizeof(ushort);
-
-                var relocations = new List<Relocation>();
-
-                for (var relocationIndex = 0; relocationIndex < relocationAmount; relocationIndex += 1)
-                {
-                    // Read the relocation
-
-                    var relocation = Marshal.PtrToStructure<ushort>(_dllBuffer.AddOffset(relocationsOffset + (uint) (sizeof(ushort) * relocationIndex)));
-
-                    // The relocation offset is located in the upper 4 bits of the ushort
-
-                    var relocationOffset = relocation & 0xFFF;
-
-                    // The relocation type is located in the lower 12 bits of the ushort
-
-                    var relocationType = relocation >> 12;
-
-                    relocations.Add(new Relocation((ushort) relocationOffset, (Enumerations.RelocationType) relocationType));
-                }
-
-                baseRelocations.Add(new BaseRelocation(ConvertRvaToOffset(baseRelocation.VirtualAddress), relocations));
-
-                // Calculate the offset of the next base relocation
-
-                baseRelocationTableOffset += baseRelocation.SizeOfBlock;
-            }
-
-            return baseRelocations;
-        }
-
-        internal DebugData GetDebugData()
-        {
-            // Calculate the offset of the debug directory
-
-            var debugDirectoryRva = _peHeaders.FileHeader.Machine == Enumerations.MachineType.X86
-                                  ? _peHeaders.NtHeaders32.OptionalHeader.DataDirectory[6].VirtualAddress
-                                  : _peHeaders.NtHeaders64.OptionalHeader.DataDirectory[6].VirtualAddress;
-
-            if (debugDirectoryRva == 0)
-            {
-                // The DLL has no debug directory
-
-                return default;
-            }
-
-            var debugDirectoryOffset = ConvertRvaToOffset(debugDirectoryRva);
-
-            // Read the debug directory
-
-            var debugDirectory = Marshal.PtrToStructure<Structures.ImageDebugDirectory>(_dllBuffer.AddOffset(debugDirectoryOffset));
+            _peBuffer = peBufferHandle.AddrOfPinnedObject();
             
-            // Read the debug data
-
-            var debugDataOffset = ConvertRvaToOffset(debugDirectory.AddressOfRawData);
+            BaseRelocations = GetBaseRelocations();
             
-            var debugData = Marshal.PtrToStructure<Structures.ImageDebugData>(_dllBuffer.AddOffset(debugDataOffset));
+            ExportedFunctions = GetExportedFunctions();
+
+            ImportedFunctions = GetImportedFunctions();
+
+            TlsCallbacks = GetTlsCallbacks();
             
-            // Read the name of the PDB
-            
-            var pdbName = Marshal.PtrToStringAnsi(_dllBuffer.AddOffset(debugDataOffset + (uint) Marshal.SizeOf<Structures.ImageDebugData>()));
-
-            return new DebugData(debugData.Age, debugData.Guid.ToString().Replace("-", ""), pdbName);
-        }
-        
-        internal List<ExportedFunction> GetExportedFunctions()
-        {
-            var exportedFunctions = new List<ExportedFunction>();
-
-            // Calculate the offset of the export directory
-
-            var exportDirectoryRva = _peHeaders.FileHeader.Machine == Enumerations.MachineType.X86
-                                   ? _peHeaders.NtHeaders32.OptionalHeader.DataDirectory[0].VirtualAddress
-                                   : _peHeaders.NtHeaders64.OptionalHeader.DataDirectory[0].VirtualAddress;
-
-            if (exportDirectoryRva == 0)
-            {
-                // The DLL has no exported functions
-
-                return exportedFunctions;
-            }
-
-            var exportDirectoryOffset = ConvertRvaToOffset(exportDirectoryRva);
-
-            // Read the export directory
-
-            var exportDirectory = Marshal.PtrToStructure<Structures.ImageExportDirectory>(_dllBuffer.AddOffset(exportDirectoryOffset));
-
-            // Calculate the offset of the exported function offsets
-
-            var exportedFunctionOffsetsOffset = ConvertRvaToOffset(exportDirectory.AddressOfFunctions);
-
-            for (var functionIndex = 0; functionIndex < exportDirectory.NumberOfFunctions; functionIndex += 1)
-            {
-                // Read the offset of the exported function
-
-                var exportedFunctionOffset = Marshal.PtrToStructure<uint>(_dllBuffer.AddOffset(exportedFunctionOffsetsOffset + (uint) (sizeof(uint) * functionIndex)));
-
-                exportedFunctions.Add(new ExportedFunction(null, exportedFunctionOffset, (ushort) (exportDirectory.Base + functionIndex)));
-            }
-
-            // Calculate the offset of the exported function names
-
-            var exportedFunctionNamesOffset = ConvertRvaToOffset(exportDirectory.AddressOfNames);
-
-            // Calculate the offset of the exported function ordinals
-
-            var exportedFunctionOrdinalsOffset = ConvertRvaToOffset(exportDirectory.AddressOfNameOrdinals);
-
-            for (var exportedFunctionIndex = 0; exportedFunctionIndex < exportDirectory.NumberOfNames; exportedFunctionIndex += 1)
-            {
-                // Calculate the offset of the name of the exported function
-
-                var exportedFunctionNameRva = Marshal.PtrToStructure<uint>(_dllBuffer.AddOffset(exportedFunctionNamesOffset + (uint) (sizeof(uint) * exportedFunctionIndex)));
-
-                var exportedFunctionNameOffset = ConvertRvaToOffset(exportedFunctionNameRva);
-
-                // Read the name of the exported function
-
-                var exportedFunctionName = Marshal.PtrToStringAnsi(_dllBuffer.AddOffset(exportedFunctionNameOffset));
-
-                // Read the ordinal of the exported function
-
-                var exportedFunctionOrdinal = exportDirectory.Base + Marshal.PtrToStructure<ushort>(_dllBuffer.AddOffset(exportedFunctionOrdinalsOffset + (uint) (sizeof(ushort) * exportedFunctionIndex)));
-
-                exportedFunctions.Find(exportedFunction => exportedFunction.Ordinal == exportedFunctionOrdinal).Name = exportedFunctionName;
-            }
-
-            return exportedFunctions;
-        }
-
-        internal List<ImportedFunction> GetImportedFunctions()
-        {
-            var importedFunctions = new List<ImportedFunction>();
-
-            // Calculate the offset of the first import descriptor
-
-            var importDescriptorRva = _peHeaders.FileHeader.Machine == Enumerations.MachineType.X86
-                                    ? _peHeaders.NtHeaders32.OptionalHeader.DataDirectory[1].VirtualAddress
-                                    : _peHeaders.NtHeaders64.OptionalHeader.DataDirectory[1].VirtualAddress;
-
-            if (importDescriptorRva == 0)
-            {
-                // The DLL has no imported functions
-
-                return importedFunctions;
-            }
-
-            var importDescriptorOffset = ConvertRvaToOffset(importDescriptorRva);
-
-            while (true)
-            {
-                // Read the import descriptor
-
-                var importDescriptor = Marshal.PtrToStructure<Structures.ImageImportDescriptor>(_dllBuffer.AddOffset(importDescriptorOffset));
-
-                if (importDescriptor.FirstThunk == 0)
-                {
-                    break;
-                }
-
-                // Read the name of the import descriptor
-
-                var importDescriptorNameOffset = ConvertRvaToOffset(importDescriptor.Name);
-
-                var importDescriptorName = Marshal.PtrToStringAnsi(_dllBuffer.AddOffset(importDescriptorNameOffset));
-
-                // Calculate the offset of the first imported function thunk
-
-                var thunkOffset = importDescriptor.OriginalFirstThunk == 0
-                                ? ConvertRvaToOffset(importDescriptor.FirstThunk)
-                                : ConvertRvaToOffset(importDescriptor.OriginalFirstThunk);
-
-                var firstThunkOffset = ConvertRvaToOffset(importDescriptor.FirstThunk);
-
-                while (true)
-                {
-                    if (_peHeaders.FileHeader.Machine == Enumerations.MachineType.X86)
-                    {
-                        // Read the thunk of the imported function
-
-                        var importedFunctionThunk = Marshal.PtrToStructure<uint>(_dllBuffer.AddOffset(thunkOffset));
-
-                        if (importedFunctionThunk == 0)
-                        {
-                            break;
-                        }
-
-                        // Check if the function is imported by its ordinal
-
-                        if ((importedFunctionThunk & Constants.OrdinalFlag32) == Constants.OrdinalFlag32)
-                        {
-                            importedFunctions.Add(new ImportedFunction(importDescriptorName, firstThunkOffset, (ushort) (importedFunctionThunk & 0xFFFF)));
-                        }
-
-                        else
-                        {
-                            // Read the ordinal of the imported function
-
-                            var importedFunctionOrdinalOffset = ConvertRvaToOffset(importedFunctionThunk);
-
-                            var importedFunctionOrdinal = Marshal.PtrToStructure<ushort>(_dllBuffer.AddOffset(importedFunctionOrdinalOffset));
-
-                            // Read the name of the imported function
-
-                            var importedFunctionName = Marshal.PtrToStringAnsi(_dllBuffer.AddOffset(importedFunctionOrdinalOffset + sizeof(ushort)));
-
-                            importedFunctions.Add(new ImportedFunction(importDescriptorName, importedFunctionName, firstThunkOffset, importedFunctionOrdinal));
-                        }
-
-                        thunkOffset += sizeof(uint);
-
-                        firstThunkOffset += sizeof(uint);
-                    }
-
-                    else
-                    {
-                        // Read the thunk of the imported function
-
-                        var importedFunctionThunk = Marshal.PtrToStructure<ulong>(_dllBuffer.AddOffset(thunkOffset));
-
-                        if (importedFunctionThunk == 0)
-                        {
-                            break;
-                        }
-
-                        // Check if the function is imported by its ordinal
-
-                        if ((importedFunctionThunk & Constants.OrdinalFlag64) == Constants.OrdinalFlag64)
-                        {
-                            importedFunctions.Add(new ImportedFunction(importDescriptorName, firstThunkOffset, (ushort) (importedFunctionThunk & 0xFFFF)));
-                        }
-
-                        else
-                        {
-                            // Read the name of the imported function
-
-                            var importedFunctionNameOffset = ConvertRvaToOffset(importedFunctionThunk) + sizeof(ushort);
-
-                            var importedFunctionName = Marshal.PtrToStringAnsi(_dllBuffer.AddOffset(importedFunctionNameOffset));
-
-                            importedFunctions.Add(new ImportedFunction(importDescriptorName, importedFunctionName, firstThunkOffset));
-                        }
-
-                        thunkOffset += sizeof(ulong);
-
-                        firstThunkOffset += sizeof(ulong);
-                    }
-                }
-
-                importDescriptorOffset += (uint) Marshal.SizeOf<Structures.ImageImportDescriptor>();
-            }
-
-
-            return importedFunctions;
-        }
-
-        internal IEnumerable<TlsCallback> GetTlsCallbacks()
-        {
-            // Calculate the offset of the TLS directory
-
-            var tlsDirectoryRva = _peHeaders.FileHeader.Machine == Enumerations.MachineType.X86
-                                ? _peHeaders.NtHeaders32.OptionalHeader.DataDirectory[9].VirtualAddress
-                                : _peHeaders.NtHeaders64.OptionalHeader.DataDirectory[9].VirtualAddress;
-
-            if (tlsDirectoryRva == 0)
-            {
-                // The DLL has no TLS directory
-
-                yield break;
-            }
-
-            var tlsDirectoryOffset = ConvertRvaToOffset(tlsDirectoryRva);
-
-            if (_peHeaders.FileHeader.Machine == Enumerations.MachineType.X86)
-            {
-                // Read the TLS directory
-
-                var tlsDirectory = Marshal.PtrToStructure<Structures.ImageTlsDirectory32>(_dllBuffer.AddOffset(tlsDirectoryOffset));
-
-                if (tlsDirectory.AddressOfCallbacks == 0)
-                {
-                    // The DLL has no TLS callbacks
-
-                    yield break;
-                }
-
-                // Calculate the offset of the TLS callbacks
-
-                var tlsCallbacksOffset = ConvertRvaToOffset(tlsDirectory.AddressOfCallbacks - _peHeaders.NtHeaders32.OptionalHeader.ImageBase);
-
-                while (true)
-                {
-                    // Read the TLS callback RVA
-
-                    var tlsCallbackRva = Marshal.PtrToStructure<uint>(_dllBuffer.AddOffset(tlsCallbacksOffset));
-
-                    if (tlsCallbackRva == 0)
-                    {
-                        break;
-                    }
-
-                    // Calculate the offset of the TLS callback
-
-                    var tlsCallbackOffset = ConvertRvaToOffset(tlsCallbackRva - _peHeaders.NtHeaders32.OptionalHeader.ImageBase);
-
-                    yield return new TlsCallback(tlsCallbackOffset);
-
-                    // Calculate the offset of the next TLS callback RVA
-
-                    tlsCallbacksOffset += sizeof(uint);
-                }
-            }
-
-            else
-            {
-                // Read the TLS directory
-
-                var tlsDirectory = Marshal.PtrToStructure<Structures.ImageTlsDirectory64>(_dllBuffer.AddOffset(tlsDirectoryOffset));
-
-                if (tlsDirectory.AddressOfCallbacks == 0)
-                {
-                    // The DLL has no TLS callbacks
-
-                    yield break;
-                }
-
-                // Calculate the offset of the TLS callbacks
-
-                var tlsCallbacksOffset = ConvertRvaToOffset(tlsDirectory.AddressOfCallbacks - _peHeaders.NtHeaders64.OptionalHeader.ImageBase);
-
-                while (true)
-                {
-                    // Read the TLS callback RVA
-
-                    var tlsCallbackRva = Marshal.PtrToStructure<ulong>(_dllBuffer.AddOffset(tlsCallbacksOffset));
-
-                    if (tlsCallbackRva == 0)
-                    {
-                        break;
-                    }
-
-                    // Calculate the offset of the TLS callback
-
-                    var tlsCallbackOffset = ConvertRvaToOffset(tlsCallbackRva - _peHeaders.NtHeaders64.OptionalHeader.ImageBase);
-
-                    yield return new TlsCallback(tlsCallbackOffset);
-
-                    // Calculate the offset of the next TLS callback RVA
-
-                    tlsCallbacksOffset += sizeof(ulong);
-                }
-            }
-        }
-
-        internal PeHeaders GetPeHeaders()
-        {
-            return _peHeaders;
+            peBufferHandle.Free();
         }
 
         private ulong ConvertRvaToOffset(ulong rva)
         {
             // Look for the section that holds the offset of the relative virtual address
-
-            var sectionHeader = _peHeaders.SectionHeaders.Find(section => section.VirtualAddress <= rva && section.VirtualAddress + section.VirtualSize > rva);
-
-            // Calculate the offset of the relative virtual address
-
-            return sectionHeader.PointerToRawData + (rva - sectionHeader.VirtualAddress);
+            
+            var sectionHeader = PeHeaders.SectionHeaders.First(section => (ulong) section.VirtualAddress <= rva && (ulong) (section.VirtualAddress + section.VirtualSize) > rva);
+            
+            return (ulong) sectionHeader.PointerToRawData + (rva - (ulong) sectionHeader.VirtualAddress);
         }
 
-        private void ReadPeHeaders()
+        private List<BaseRelocation> GetBaseRelocations()
         {
-            // Read the DOS header
+            var baseRelocations = new List<BaseRelocation>();
+            
+            // Calculate the offset of the base relocation table
 
-            _peHeaders.DosHeader = Marshal.PtrToStructure<Structures.ImageDosHeader>(_dllBuffer);
-
-            if (_peHeaders.DosHeader.e_magic != Constants.DosSignature)
+            var baseRelocationTableRva = PeHeaders.PEHeader.BaseRelocationTableDirectory.RelativeVirtualAddress;
+            
+            if (baseRelocationTableRva == 0)
             {
-                throw new BadImageFormatException("The DOS header of the DLL was invalid");
+                // The PE has no base relocations
+
+                return baseRelocations;
             }
+            
+            var baseRelocationTableOffset = ConvertRvaToOffset((ulong) baseRelocationTableRva);
+            
+            var baseRelocationOffset = 0U;
 
-            // Read the file header
-
-            _peHeaders.FileHeader = Marshal.PtrToStructure<Structures.ImageFileHeader>(_dllBuffer.AddOffset(_peHeaders.DosHeader.e_lfanew + sizeof(uint)));
-
-            if (!_peHeaders.FileHeader.Characteristics.HasFlag(Enumerations.FileCharacteristics.Dll))
+            while (true)
             {
-                throw new BadImageFormatException("The file header of the DLL was invalid");
-            }
-
-            // Read the NT headers
-
-            if (_peHeaders.FileHeader.Machine == Enumerations.MachineType.X86)
-            {
-                _peHeaders.NtHeaders32 = Marshal.PtrToStructure<Structures.ImageNtHeaders32>(_dllBuffer.AddOffset(_peHeaders.DosHeader.e_lfanew));
-
-                if (_peHeaders.NtHeaders32.Signature != Constants.NtSignature)
+                // Read the base relocation
+                
+                var baseRelocation = Marshal.PtrToStructure<ImageBaseRelocation>(_peBuffer.AddOffset(baseRelocationTableOffset + baseRelocationOffset));
+                
+                if (baseRelocation.SizeOfBlock == 0)
                 {
-                    throw new BadImageFormatException("The NT headers of the DLL were invalid");
+                    break;
+                }
+                
+                // Calculate the amount of relocations in the base relocation
+                
+                var relocationsOffset = baseRelocationTableOffset + (uint) Marshal.SizeOf<ImageBaseRelocation>();
+                
+                var relocationAmount = (baseRelocation.SizeOfBlock - Marshal.SizeOf<ImageBaseRelocation>()) / sizeof(ushort);
+                
+                var relocations = new List<Relocation>();
+
+                // Read the relocations
+                
+                for (var relocationIndex = 0; relocationIndex < relocationAmount; relocationIndex += 1)
+                {
+                    var relocation = Marshal.PtrToStructure<ushort>(_peBuffer.AddOffset(relocationsOffset + (uint) (sizeof(ushort) * relocationIndex)));
+                    
+                    // The relocation offset is located in the upper 4 bits of the ushort
+                    
+                    var relocationOffset = relocation & 0xFFF;
+                    
+                    // The relocation type is located in the lower 12 bits of the ushort
+                    
+                    var relocationType = relocation >> 12;
+                    
+                    relocations.Add(new Relocation((ushort) relocationOffset, (RelocationType) relocationType));
+                }
+                
+                baseRelocations.Add(new BaseRelocation(ConvertRvaToOffset(baseRelocation.VirtualAddress), relocations));
+                
+                // Calculate the offset of the next base relocation
+                
+                baseRelocationOffset += baseRelocation.SizeOfBlock;
+            }
+            
+            return baseRelocations;
+        }
+        
+        private List<ExportedFunction> GetExportedFunctions()
+        {
+            var exportedFunctions = new List<ExportedFunction>();
+
+            // Read the export directory
+            
+            var exportDirectoryRva = PeHeaders.PEHeader.ExportTableDirectory.RelativeVirtualAddress;
+            
+            if (exportDirectoryRva == 0)
+            {
+                // The PE has no exported functions
+
+                return exportedFunctions;
+            }
+            
+            var exportDirectoryOffset = ConvertRvaToOffset((ulong) exportDirectoryRva);
+
+            var exportDirectory = Marshal.PtrToStructure<ImageExportDirectory>(_peBuffer.AddOffset(exportDirectoryOffset));
+            
+            // Read the exported functions
+
+            var exportedFunctionOffsetsOffset = ConvertRvaToOffset(exportDirectory.AddressOfFunctions);
+
+            for (var exportedFunctionIndex = 0; exportedFunctionIndex < exportDirectory.NumberOfFunctions; exportedFunctionIndex += 1)
+            {
+                var exportedFunctionOffset = Marshal.PtrToStructure<uint>(_peBuffer.AddOffset(exportedFunctionOffsetsOffset + (uint) (sizeof(uint) * exportedFunctionIndex)));
+                
+                exportedFunctions.Add(new ExportedFunction(null, exportedFunctionOffset, (ushort) (exportDirectory.Base + exportedFunctionIndex)));
+            }
+            
+            // Associate the names of the exported functions
+            
+            var exportedFunctionNamesOffset = ConvertRvaToOffset(exportDirectory.AddressOfNames);
+            
+            var exportedFunctionOrdinalsOffset = ConvertRvaToOffset(exportDirectory.AddressOfNameOrdinals);
+
+            for (var exportedFunctionIndex = 0; exportedFunctionIndex < exportDirectory.NumberOfNames; exportedFunctionIndex += 1)
+            {
+                // Read the name of the exported function
+                
+                var exportedFunctionNameRva = Marshal.PtrToStructure<uint>(_peBuffer.AddOffset(exportedFunctionNamesOffset + (uint) (sizeof(uint) * exportedFunctionIndex)));
+                
+                var exportedFunctionNameOffset = ConvertRvaToOffset(exportedFunctionNameRva);
+                
+                var exportedFunctionName = Marshal.PtrToStringAnsi(_peBuffer.AddOffset(exportedFunctionNameOffset));
+                
+                var exportedFunctionOrdinal = exportDirectory.Base + Marshal.PtrToStructure<ushort>(_peBuffer.AddOffset(exportedFunctionOrdinalsOffset + (uint) (sizeof(ushort) * exportedFunctionIndex)));
+                
+                exportedFunctions.Find(exportedFunction => exportedFunction.Ordinal == exportedFunctionOrdinal).Name = exportedFunctionName;
+            }
+            
+            return exportedFunctions;
+        }
+        
+        private List<ImportedFunction> GetImportedFunctions()
+        {
+            var importedFunctions = new List<ImportedFunction>();
+
+            // Calculate the offset of the import table
+            
+            var importTableRva = PeHeaders.PEHeader.ImportTableDirectory.RelativeVirtualAddress;
+
+            if (importTableRva == 0)
+            {
+                // The PE has no imported functions
+
+                return importedFunctions;
+            }
+            
+            var importTableOffset = ConvertRvaToOffset((ulong) importTableRva);
+
+            for (var importDescriptorIndex = 0;; importDescriptorIndex += 1)
+            {
+                // Read the name import descriptor
+                
+                var importDescriptor = Marshal.PtrToStructure<ImageImportDescriptor>(_peBuffer.AddOffset(importTableOffset + (uint) (Marshal.SizeOf<ImageImportDescriptor>() * importDescriptorIndex)));
+
+                if (importDescriptor.FirstThunk == 0)
+                {
+                    break;
+                }
+                
+                var importDescriptorNameOffset = ConvertRvaToOffset(importDescriptor.Name);
+                
+                var importDescriptorName = Marshal.PtrToStringAnsi(_peBuffer.AddOffset(importDescriptorNameOffset));
+                
+                // Read the imported functions associated with the import descriptor
+                
+                var importDescriptorThunkOffset = importDescriptor.OriginalFirstThunk == 0
+                                                ? ConvertRvaToOffset(importDescriptor.FirstThunk)
+                                                : ConvertRvaToOffset(importDescriptor.OriginalFirstThunk);
+
+                var importDescriptorFirstThunkOffset = ConvertRvaToOffset(importDescriptor.FirstThunk);
+
+                for (var importedFunctionIndex = 0;; importedFunctionIndex += 1)
+                {
+                    // Read the thunk of the imported function
+                    
+                    var importedFunctionThunkOffset = PeHeaders.PEHeader.Magic == PEMagic.PE32
+                                                    ? importDescriptorThunkOffset + (uint) (sizeof(uint) * importedFunctionIndex)
+                                                    : importDescriptorThunkOffset + (uint) (sizeof(ulong) * importedFunctionIndex);
+                    
+                    var importedFunctionThunk = Marshal.PtrToStructure<uint>(_peBuffer.AddOffset(importedFunctionThunkOffset));
+                    
+                    if (importedFunctionThunk == 0)
+                    {
+                        break;
+                    }
+                    
+                    var importedFunctionFirstThunkOffset = PeHeaders.PEHeader.Magic == PEMagic.PE32
+                                                         ? importDescriptorFirstThunkOffset + (uint) (sizeof(uint) * importedFunctionIndex)
+                                                         : importDescriptorFirstThunkOffset + (uint) (sizeof(ulong) * importedFunctionIndex);
+                    
+                    // Determine if the function is imported by its ordinal
+
+                    switch (PeHeaders.PEHeader.Magic)
+                    {
+                        case PEMagic.PE32 when (importedFunctionThunk & OrdinalFlag32) == OrdinalFlag32:
+                        {
+                            importedFunctions.Add(new ImportedFunction(importDescriptorName, null, importedFunctionFirstThunkOffset, (ushort) (importedFunctionThunk & 0xFFFF)));
+
+                            break;
+                        }
+
+                        case PEMagic.PE32Plus when (importedFunctionThunk & OrdinalFlag64) == OrdinalFlag64:
+                        {
+                            importedFunctions.Add(new ImportedFunction(importDescriptorName, null, importedFunctionFirstThunkOffset, (ushort) (importedFunctionThunk & 0xFFFF)));
+
+                            break;
+                        }
+
+                        default:
+                        {
+                            // Read the ordinal and name of the imported function
+                            
+                            var importedFunctionOrdinalOffset = ConvertRvaToOffset(importedFunctionThunk);
+
+                            var importedFunctionOrdinal = Marshal.PtrToStructure<ushort>(_peBuffer.AddOffset(importedFunctionOrdinalOffset));
+                            
+                            var importedFunctionName = Marshal.PtrToStringAnsi(_peBuffer.AddOffset(importedFunctionOrdinalOffset + sizeof(ushort)));
+                            
+                            importedFunctions.Add(new ImportedFunction(importDescriptorName, importedFunctionName, importedFunctionFirstThunkOffset, importedFunctionOrdinal));
+
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            return importedFunctions;
+        }
+        
+        private List<TlsCallback> GetTlsCallbacks()
+        {
+            var tlsCallbacks = new List<TlsCallback>();
+
+            // Calculate the offset the TLS directory
+            
+            var tlsDirectoryRva = PeHeaders.PEHeader.ThreadLocalStorageTableDirectory.RelativeVirtualAddress;
+            
+            if (tlsDirectoryRva == 0)
+            {
+                // The PE has no TLS directory
+                
+                return tlsCallbacks;
+            }
+            
+            var tlsDirectoryOffset = ConvertRvaToOffset((ulong) tlsDirectoryRva);
+            
+            // Calculate the offset of the TLS callbacks
+            
+            ulong tlsCallbacksRva;
+            
+            if (PeHeaders.PEHeader.Magic == PEMagic.PE32)
+            {
+                // Read the TLS directory
+                
+                var tlsDirectory = Marshal.PtrToStructure<ImageTlsDirectory32>(_peBuffer.AddOffset(tlsDirectoryOffset));
+
+                if (tlsDirectory.AddressOfCallbacks == 0)
+                {
+                    // The PE has no TLS callbacks
+
+                    return tlsCallbacks;
                 }
 
-                if (_peHeaders.NtHeaders32.OptionalHeader.DataDirectory[14].VirtualAddress != 0)
-                {
-                    throw new BadImageFormatException(".Net DLLs are not supported");
-                }
+                tlsCallbacksRva = tlsDirectory.AddressOfCallbacks;
             }
-
+            
             else
             {
-                _peHeaders.NtHeaders64 = Marshal.PtrToStructure<Structures.ImageNtHeaders64>(_dllBuffer.AddOffset(_peHeaders.DosHeader.e_lfanew));
+                // Read the TLS directory
+                
+                var tlsDirectory = Marshal.PtrToStructure<ImageTlsDirectory64>(_peBuffer.AddOffset(tlsDirectoryOffset));
 
-                if (_peHeaders.NtHeaders64.Signature != Constants.NtSignature)
+                if (tlsDirectory.AddressOfCallbacks == 0)
                 {
-                    throw new BadImageFormatException("The NT headers of the DLL were invalid");
+                    // The PE has no TLS callbacks
+
+                    return tlsCallbacks;
                 }
 
-                if (_peHeaders.NtHeaders64.OptionalHeader.DataDirectory[14].VirtualAddress != 0)
-                {
-                    throw new BadImageFormatException(".Net DLLs are not supported");
-                }
+                tlsCallbacksRva = tlsDirectory.AddressOfCallbacks;
             }
 
-            // Read the section headers
+            var tlsCallbacksOffset = ConvertRvaToOffset(tlsCallbacksRva - PeHeaders.PEHeader.ImageBase);
+            
+            // Read the offsets of the TLS callbacks
 
-            var sectionHeadersOffset = _peHeaders.FileHeader.Machine == Enumerations.MachineType.X86
-                                     ? _peHeaders.DosHeader.e_lfanew + Marshal.SizeOf<Structures.ImageNtHeaders32>()
-                                     : _peHeaders.DosHeader.e_lfanew + Marshal.SizeOf<Structures.ImageNtHeaders64>();
-
-            for (var sectionHeaderIndex = 0; sectionHeaderIndex < _peHeaders.FileHeader.NumberOfSections; sectionHeaderIndex += 1)
+            for (var tlsCallbackIndex = 0;; tlsCallbackIndex += 1)
             {
-                var sectionHeader = Marshal.PtrToStructure<Structures.ImageSectionHeader>(_dllBuffer.AddOffset(sectionHeadersOffset + Marshal.SizeOf<Structures.ImageSectionHeader>() * sectionHeaderIndex));
-
-                _peHeaders.SectionHeaders.Add(sectionHeader);
+                var tlsCallbackRva = PeHeaders.PEHeader.Magic == PEMagic.PE32
+                                   ? Marshal.PtrToStructure<uint>(_peBuffer.AddOffset(tlsCallbacksOffset + (uint) (sizeof(uint) * tlsCallbackIndex)))
+                                   : Marshal.PtrToStructure<ulong>(_peBuffer.AddOffset(tlsCallbacksOffset + (uint) (sizeof(ulong) * tlsCallbackIndex)));
+                
+                if (tlsCallbackRva == 0)
+                {
+                    break;
+                }
+                
+                var tlsCallbackOffset = ConvertRvaToOffset(tlsCallbackRva - PeHeaders.PEHeader.ImageBase);
+                
+                tlsCallbacks.Add(new TlsCallback(tlsCallbackOffset));
             }
+            
+            return tlsCallbacks;
         }
     }
 }

@@ -1,9 +1,9 @@
 using System;
+using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using Bleak.Injection.Objects;
-using Bleak.Native;
 
-namespace Bleak.Handlers
+namespace Bleak.Shared.Handlers
 {
     internal static class ValidationHandler
     {
@@ -11,19 +11,19 @@ namespace Bleak.Handlers
         {
             // Ensure the architecture of the remote process matches the architecture of the DLL
 
-            if (injectionWrapper.RemoteProcess.IsWow64 != (injectionWrapper.PeParser.GetArchitecture() == Enumerations.MachineType.X86))
+            if (injectionWrapper.ProcessManager.IsWow64 != (injectionWrapper.PeParser.PeHeaders.PEHeader.Magic == PEMagic.PE32))
             {
                 throw new ApplicationException("The architecture of the remote process did not match the architecture of the DLL");
             }
 
             // Ensure that x64 injection is not being attempted from an x86 build
 
-            if (!Environment.Is64BitProcess && !injectionWrapper.RemoteProcess.IsWow64)
+            if (!Environment.Is64BitProcess && !injectionWrapper.ProcessManager.IsWow64)
             {
                 throw new ApplicationException("x64 injection is not supported when compiled under x86");
             }
         }
-
+        
         internal static void ValidateOperatingSystem()
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))

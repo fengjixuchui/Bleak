@@ -10,7 +10,7 @@ A Windows native DLL injection library written in C# that supports several metho
 
 * CreateThread
 * HijackThread
-* ManualMap
+* Manual
 
 ### Injection Extensions
 
@@ -21,7 +21,7 @@ A Windows native DLL injection library written in C# that supports several metho
 ### Features
 
 * Optional randomise DLL name
-* x86 and x64 injection
+* WOW64 and x64 injection
 
 ----
 
@@ -37,7 +37,7 @@ After installing Bleak, you will want to ensure that your project is being compi
 
 ----
 
-### Useage
+### Usage
 
 The example below describes a basic implementation of the library.
 
@@ -46,21 +46,20 @@ using Bleak;
 
 var randomiseDllName = true;
 
-var injector = new Injector(InjectionMethod.CreateThread, "processName", "dllPath", randomiseDllName);
+using (var injector = new Injector(InjectionMethod.CreateThread, "processName", "dllPath", randomiseDllName))
+{
+    // Inject the DLL into the process
 
-// Inject the DLL into the process
+    var dllBaseAddress = injector.InjectDll();
 
-var dllBaseAddress = injector.InjectDll();
+    // Hide the injected DLL from the PEB
 
-// Hide the injected DLL from the PEB
+    injector.HideFromPeb();
 
-injector.HideFromPeb();
+    // Eject the DLL from the process
 
-// Eject the DLL from the process
-
-injector.EjectDll();
-
-injector.Dispose();
+    injector.EjectDll();
+}
 ```
 
 ----
@@ -84,9 +83,15 @@ var injector = new Injector(InjectionMethod, "processName", dllBytes);
 
 ### Caveats
 
-* Injecting with a byte array will result in the provided DLL being written to disk in the temporary folder, unless the method of injection is ManualMap.
+* Injecting with a byte array will result in the provided DLL being written to disk in the temporary folder, unless the method of injection is Manual.
 
-* x86 ManualMap relies on a PDB being present for ntdll.dll, and so, the first time this method is used with a x86 process, a PDB for ntdll.dll will be downloaded and cached in the temporary folder. Note that anytime your system updates, a new PDB version may need to be downloaded and re-cached in the temporary folder. This process make take a few seconds depending on your connection speed.
+* Injecting into a system process requires the program to be run in Administrator mode.
+
+* Manual injection only supports structured exception handling. This means that you cannot use vectored exception handling (C++ uses this) if you wish to use this method of injection.
+
+* x86 Manual injection relies on a PDB being present for ntdll.dll, and so, the first time this method is used with a x86 process, a PDB for ntdll.dll will be downloaded and cached in the temporary folder. Note that anytime your system updates, a new PDB version may need to be downloaded and re-cached in the temporary folder. This process make take a few seconds depending on your connection speed.
+
+* No support for native x86 systems or Windows versions older than 10.
 
 ----
 

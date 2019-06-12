@@ -1,6 +1,6 @@
 namespace Bleak.ProgramDatabase.Objects
 {
-    internal class Symbol
+    internal class PdbSymbol
     {
         internal readonly string Name;
         
@@ -8,7 +8,7 @@ namespace Bleak.ProgramDatabase.Objects
 
         internal readonly uint Section;
 
-        internal Symbol(string name, uint offset, uint section)
+        internal PdbSymbol(string name, uint offset, uint section)
         {
             Name = name;
 

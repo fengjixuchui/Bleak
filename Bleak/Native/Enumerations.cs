@@ -10,31 +10,19 @@ namespace Bleak.Native
             Commit = 0x1000,
             Reserve = 0x2000
         }
-
+        
         [Flags]
         internal enum ContextFlags
         {
             Control = 0x10001
         }
-
-        [Flags]
-        internal enum FileCharacteristics : ushort
-        {
-            Dll = 0x2000
-        }
-
+        
         [Flags]
         internal enum FreeType
         {
             Release = 0x8000
         }
-
-        [Flags]
-        internal enum MachineType : ushort
-        {
-            X86 = 0x14C
-        }
-
+        
         [Flags]
         internal enum MemoryProtection
         {
@@ -46,40 +34,29 @@ namespace Bleak.Native
             ExecuteRead = 0x20,
             ExecuteReadWrite = 0x40,
             ExecuteWriteCopy = 0x80,
-            Guard = 0x100,
-            NoCache = 0x200,
-            WriteCombine = 0x400
+            NoCache = 0x200
         }
-
+        
         [Flags]
         internal enum NtStatus : uint
         {
             Success = 0x00
         }
-
+        
         [Flags]
         internal enum ProcessInformationClass
         {
             BasicInformation = 0x00,
             Wow64Information = 0x1A
         }
-
+        
         [Flags]
         internal enum RelocationType : byte
         {
             HighLow = 0x03,
             Dir64 = 0x0A
         }
-
-        [Flags]
-        internal enum SectionCharacteristics : uint
-        {
-            MemoryNotCached = 0x04000000,
-            MemoryExecute = 0x020000000,
-            MemoryRead = 0x040000000,
-            MemoryWrite = 0x080000000
-        }
-
+        
         [Flags]
         internal enum ThreadAccessMask
         {
@@ -87,7 +64,13 @@ namespace Bleak.Native
             StandardRightsAll = 0x1F0000,
             AllAccess = SpecificRightsAll | StandardRightsAll
         }
-
+        
+        [Flags]
+        internal enum ThreadCreationFlags
+        {
+            HideFromDebugger = 0x04
+        }
+        
         [Flags]
         internal enum VirtualKey
         {

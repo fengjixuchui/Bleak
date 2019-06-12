@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Bleak.Injection.Interfaces;
 using Bleak.Injection.Objects;
-using Bleak.Native;
+using static Bleak.Native.Structures;
 
 namespace Bleak.Injection.Extensions
 {
@@ -15,18 +15,20 @@ namespace Bleak.Injection.Extensions
         {
             _injectionWrapper = injectionWrapper;
         }
-
+        
         public bool Call(InjectionContext injectionContext)
         {
-            if (_injectionWrapper.RemoteProcess.IsWow64)
+            foreach (var pebEntry in _injectionWrapper.ProcessManager.GetPebEntries())
             {
                 var filePathRegex = new Regex("System32", RegexOptions.IgnoreCase);
-
-                foreach (var pebEntry in _injectionWrapper.RemoteProcess.GetWow64PebEntries())
+                
+                if (_injectionWrapper.ProcessManager.IsWow64)
                 {
+                    var loaderEntry = (LdrDataTableEntry32) pebEntry.LoaderEntry;
+                    
                     // Read the file path of the entry
 
-                    var entryFilePathBytes = _injectionWrapper.MemoryManager.ReadVirtualMemory((IntPtr) pebEntry.FullDllName.Buffer, pebEntry.FullDllName.Length);
+                    var entryFilePathBytes = _injectionWrapper.MemoryManager.ReadVirtualMemory((IntPtr) loaderEntry.FullDllName.Buffer, loaderEntry.FullDllName.Length);
 
                     var entryFilePath = filePathRegex.Replace(Encoding.Unicode.GetString(entryFilePathBytes), "SysWOW64");
 
@@ -37,31 +39,30 @@ namespace Bleak.Injection.Extensions
                     
                     // Remove the entry from the doubly linked lists
 
-                    RemoveDoublyLinkedListEntry(pebEntry.InLoadOrderLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.InLoadOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(pebEntry.InMemoryOrderLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.InMemoryOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(pebEntry.InInitializationOrderLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.InInitializationOrderLinks);
 
                     // Remove the entry from the LdrpHashTable
 
-                    RemoveDoublyLinkedListEntry(pebEntry.HashLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.HashLinks);
 
                     // Write over the DLL name and path
 
-                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) pebEntry.BaseDllName.Buffer, new byte[pebEntry.BaseDllName.MaximumLength]);
+                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) loaderEntry.BaseDllName.Buffer, new byte[loaderEntry.BaseDllName.MaximumLength]);
 
-                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) pebEntry.FullDllName.Buffer, new byte[pebEntry.FullDllName.MaximumLength]);
+                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) loaderEntry.FullDllName.Buffer, new byte[loaderEntry.FullDllName.MaximumLength]);
                 }
-            }
 
-            else
-            {
-                foreach (var pebEntry in _injectionWrapper.RemoteProcess.GetPebEntries())
+                else
                 {
+                    var loaderEntry = (LdrDataTableEntry64) pebEntry.LoaderEntry;
+                    
                     // Read the file path of the entry
 
-                    var entryFilePathBytes = _injectionWrapper.MemoryManager.ReadVirtualMemory((IntPtr) pebEntry.FullDllName.Buffer, pebEntry.FullDllName.Length);
+                    var entryFilePathBytes = _injectionWrapper.MemoryManager.ReadVirtualMemory((IntPtr) loaderEntry.FullDllName.Buffer, loaderEntry.FullDllName.Length);
 
                     var entryFilePath = Encoding.Unicode.GetString(entryFilePathBytes);
 
@@ -72,32 +73,32 @@ namespace Bleak.Injection.Extensions
                     
                     // Remove the entry from the doubly linked lists
 
-                    RemoveDoublyLinkedListEntry(pebEntry.InLoadOrderLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.InLoadOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(pebEntry.InMemoryOrderLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.InMemoryOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(pebEntry.InInitializationOrderLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.InInitializationOrderLinks);
 
                     // Remove the entry from the LdrpHashTable
 
-                    RemoveDoublyLinkedListEntry(pebEntry.HashLinks);
+                    RemoveDoublyLinkedListEntry(loaderEntry.HashLinks);
 
                     // Write over the DLL name and path
 
-                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) pebEntry.BaseDllName.Buffer, new byte[pebEntry.BaseDllName.MaximumLength]);
+                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) loaderEntry.BaseDllName.Buffer, new byte[loaderEntry.BaseDllName.MaximumLength]);
 
-                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) pebEntry.FullDllName.Buffer, new byte[pebEntry.FullDllName.MaximumLength]);
+                    _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) loaderEntry.FullDllName.Buffer, new byte[loaderEntry.FullDllName.MaximumLength]);
                 }
             }
-
+            
             return true;
         }
-
-        private void RemoveDoublyLinkedListEntry(Structures.ListEntry32 entry)
+        
+        private void RemoveDoublyLinkedListEntry(ListEntry32 entry)
         {
             // Read the previous entry from the list
 
-            var previousEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ListEntry32>((IntPtr) entry.Blink);
+            var previousEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<ListEntry32>((IntPtr) entry.Blink);
 
             // Change the front link of the previous entry to the front link of the entry
 
@@ -107,7 +108,7 @@ namespace Bleak.Injection.Extensions
 
             // Read the next entry from the list
 
-            var nextEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ListEntry32>((IntPtr) entry.Flink);
+            var nextEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<ListEntry32>((IntPtr) entry.Flink);
 
             // Change the back link of the next entry to the back link of the entry
 
@@ -116,11 +117,11 @@ namespace Bleak.Injection.Extensions
             _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) entry.Flink, nextEntry);
         }
 
-        private void RemoveDoublyLinkedListEntry(Structures.ListEntry64 entry)
+        private void RemoveDoublyLinkedListEntry(ListEntry64 entry)
         {
             // Read the previous entry from the list
 
-            var previousEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ListEntry64>((IntPtr) entry.Blink);
+            var previousEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<ListEntry64>((IntPtr) entry.Blink);
 
             // Change the front link of the previous entry to the front link of the entry
 
@@ -130,7 +131,7 @@ namespace Bleak.Injection.Extensions
 
             // Read the next entry from the list
 
-            var nextEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<Structures.ListEntry64>((IntPtr) entry.Flink);
+            var nextEntry = _injectionWrapper.MemoryManager.ReadVirtualMemory<ListEntry64>((IntPtr) entry.Flink);
 
             // Change the back link of the next entry to the back link of the entry
 

@@ -5,73 +5,60 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
-using Bleak.Native;
+using System.Threading.Tasks;
 using Bleak.ProgramDatabase.Objects;
 using Bleak.RemoteProcess.Objects;
 using Bleak.Shared;
+using static Bleak.Native.Structures;
+using static Bleak.Native.Constants;
 
 namespace Bleak.ProgramDatabase
 {
-    internal class PdbParser 
+    internal class PdbParser
     {
-        private readonly Module _module;
+        internal readonly List<PdbSymbol> PdbSymbols;
 
-        private bool _pdbDownloaded;
-        
+        internal readonly Module Module;
+
         private string _pdbPath;
-        
-        private readonly List<Symbol> _pdbSymbols;
-        
+
         internal PdbParser(Module module)
         {
-            _module = module;
-            
-            _pdbSymbols = new List<Symbol>();
-            
-            GetPdbSymbols();
+            PdbSymbols = Task.Run(GetPdbSymbols).Result;
+
+            Module = module;
         }
 
-        internal IntPtr GetSymbolAddress(string symbolName)
+        private async Task DownloadPdb()
         {
-            var pdbSymbol = _pdbSymbols.Find(symbol => symbol.Name == symbolName);
-
-            // Get the section that the symbol resides in
+            var debugData = Module.PeParser.Value.DebugData;
             
-            var symbolSection = _module.PeParser.Value.GetPeHeaders().SectionHeaders[(int) pdbSymbol.Section - 1];
+            // Create the URI for the PDB
 
-            // Calculate the address of the symbol
+            var pdbUri = new Uri($"http://msdl.microsoft.com/download/symbols/{debugData.Path}/{debugData.Guid}/{debugData.Age}/{debugData.Path}");
+
+            // Ensure a directory exists on disk for the PDB
+
+            var directoryInfo = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Bleak", "PDB"));
+
+            var pdbName = $"{debugData.Path}-{debugData.Guid}-{debugData.Age}.pdb";
+
+            _pdbPath = Path.Combine(directoryInfo.FullName, pdbName);
             
-            return _module.BaseAddress.AddOffset(symbolSection.VirtualAddress + pdbSymbol.Offset);
-        }
+            var webClient = new WebClient();
 
-        private void DownloadPdb()
-        {
-            var pdbDebugData = _module.PeParser.Value.GetDebugData();
-            
-            // Get the URI for the PDB
-            
-            var pdbUri = "http://msdl.microsoft.com/download/symbols/" + pdbDebugData.Name + "/" + pdbDebugData.Guid + pdbDebugData.Age + "/" + pdbDebugData.Name;
-
-            // Ensure a temporary directory exists on disk for the PDB
-
-            var temporaryDirectoryInfo = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Bleak", "PDB"));
-
-            var pdbName = $"{_module.Name}-{pdbDebugData.Guid}-{pdbDebugData.Age}.pdb";
-            
-            _pdbPath = Path.Combine(temporaryDirectoryInfo.FullName, pdbName);
+            webClient.OpenRead(pdbUri);
             
             // Ensure the PDB hasn't already been downloaded
-            
-            if (temporaryDirectoryInfo.EnumerateFiles().Any(file => file.Name == pdbName))
+
+            if (directoryInfo.EnumerateFiles().Any(file => file.Name == pdbName && file.Length == int.Parse(webClient.ResponseHeaders["Content-Length"])))
             {
-                _pdbDownloaded = true;
-                
                 return;
             }
 
             // Clear the directory
-
-            foreach (var file in temporaryDirectoryInfo.GetFiles())
+            
+            foreach (var file in directoryInfo.EnumerateFiles())
             {
                 try
                 {
@@ -84,54 +71,45 @@ namespace Bleak.ProgramDatabase
                 }
             }
 
-            using (var webClient = new WebClient())
+            // Ensure the microsoft symbol server can be accessed
+            
+            if (new Ping().Send("msdl.microsoft.com")?.Status != IPStatus.Success)
             {
-                if (new Ping().Send("msdl.microsoft.com")?.Status != IPStatus.Success)
-                {
-                    throw new WebException("Failed to ping the Microsoft symbol server");
-                }
-                
-                // Download the PDB
-
-                webClient.DownloadFileCompleted += (sender, @event) => { _pdbDownloaded = true; };
-                
-                webClient.DownloadFileAsync(new Uri(pdbUri), Path.Combine(temporaryDirectoryInfo.FullName, pdbName));
+                throw new WebException("Failed to ping the Microsoft symbol server");
             }
+            
+            await webClient.DownloadFileTaskAsync(pdbUri, _pdbPath);
         }
 
-        private void GetPdbSymbols()
+        private async Task<List<PdbSymbol>> GetPdbSymbols()
         {
-            DownloadPdb();
+            var pdbSymbols = new List<PdbSymbol>();
             
-            while (!_pdbDownloaded) { }
+            await DownloadPdb();
 
-            // Store the bytes of the PDB in a buffer
+            // Read the PDB header
             
             var pdbBufferHandle = GCHandle.Alloc(File.ReadAllBytes(_pdbPath), GCHandleType.Pinned);
 
             var pdbBuffer = pdbBufferHandle.AddrOfPinnedObject();
             
-            // Read the PDB header
-
-            var pdbHeader = Marshal.PtrToStructure<Structures.PdbHeader>(pdbBuffer);
+            var pdbHeader = Marshal.PtrToStructure<PdbHeader>(pdbBuffer);
             
             // Determine the amount of streams in the PDB
-
+            
             var rootPageNumber = Marshal.PtrToStructure<uint>(pdbBuffer.AddOffset(pdbHeader.PageSize * pdbHeader.RootStreamPageNumberListNumber));
-
+            
             var rootStream = Marshal.PtrToStructure<uint>(pdbBuffer.AddOffset(pdbHeader.PageSize * rootPageNumber));
-
+            
             var streams = new List<List<uint>>();
-
+            
             var pageNumber = 0;
             
             for (var streamIndex = 0; streamIndex < rootStream; streamIndex += 1)
             {
-                // Read the size of the stream
+                // Calculate the amount of pages in the stream
                 
                 var streamSize = Marshal.PtrToStructure<uint>(pdbBuffer.AddOffset(pdbHeader.PageSize * rootPageNumber + sizeof(uint) + sizeof(uint) * streamIndex));
-
-                // Calculate the amount of pages in the stream
                 
                 var pagesNeeded = streamSize / pdbHeader.PageSize;
 
@@ -153,15 +131,13 @@ namespace Bleak.ProgramDatabase
                 
                 streams.Add(streamPages); 
             }
-
-            // Calculate the offset of the DBI stream
+            
+            // Read the DBI header
             
             var dbiStreamOffset = pdbHeader.PageSize * streams[3][0];
-
-            // Read the DBI header
-
-            var dbiHeader = Marshal.PtrToStructure<Structures.DbiHeader>(pdbBuffer.AddOffset(dbiStreamOffset));
-
+            
+            var dbiHeader = Marshal.PtrToStructure<DbiHeader>(pdbBuffer.AddOffset(dbiStreamOffset));
+            
             // Get the symbol stream
 
             var symbolStream = new byte[pdbHeader.PageSize * streams[dbiHeader.SymbolStreamIndex].Count];
@@ -170,38 +146,36 @@ namespace Bleak.ProgramDatabase
             {
                 Marshal.Copy(pdbBuffer.AddOffset(pdbHeader.PageSize * streams[dbiHeader.SymbolStreamIndex][pageIndex]), symbolStream, (int) pdbHeader.PageSize * pageIndex, (int) pdbHeader.PageSize);
             }
-
-            // Pin the symbol stream bytes
             
+            pdbBufferHandle.Free();
+
             var symbolStreamBufferHandle = GCHandle.Alloc(symbolStream, GCHandleType.Pinned);
 
             var symbolStreamBuffer = symbolStreamBufferHandle.AddrOfPinnedObject();
 
             while (true)
             {
-                // Read the data of the symbol
+                // Read the name of the symbol
                 
-                var symbolData = Marshal.PtrToStructure<Structures.SymbolData>(symbolStreamBuffer);
+                var symbolData = Marshal.PtrToStructure<SymbolData>(symbolStreamBuffer);
                 
-                if (symbolData.Magic != Constants.SymbolMagic)
+                if (symbolData.Magic != SymbolMagic)
                 {
                     break;
                 }
-
-                // Read the name of the symbol
                 
-                var symbolName = Marshal.PtrToStringAnsi(symbolStreamBuffer.AddOffset(Marshal.SizeOf<Structures.SymbolData>()));
+                var symbolName = Marshal.PtrToStringAnsi(symbolStreamBuffer.AddOffset(Marshal.SizeOf<SymbolData>()));
                 
-                _pdbSymbols.Add(new Symbol(symbolName, symbolData.Offset, symbolData.Section));
+                pdbSymbols.Add(new PdbSymbol(symbolName, symbolData.Offset, symbolData.Section));
                 
                 // Calculate the address of the next symbol
                 
                 symbolStreamBuffer += symbolData.Length + sizeof(ushort);
             }
-
+            
             symbolStreamBufferHandle.Free();
             
-            pdbBufferHandle.Free();
+            return pdbSymbols;
         }
     }
 }

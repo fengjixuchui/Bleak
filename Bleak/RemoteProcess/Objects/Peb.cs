@@ -4,15 +4,15 @@ namespace Bleak.RemoteProcess.Objects
 {
     internal class Peb
     {
-        internal readonly IntPtr ApiSetMap;
+        internal readonly IntPtr ApiSetMapAddress;
 
-        internal readonly IntPtr Ldr;
+        internal readonly IntPtr LoaderAddress;
 
-        internal Peb(IntPtr apiSetMap, IntPtr ldr)
+        internal Peb(IntPtr apiSetMapAddress, IntPtr loaderAddress)
         {
-            ApiSetMap = apiSetMap;
+            ApiSetMapAddress = apiSetMapAddress;
 
-            Ldr = ldr;
+            LoaderAddress = loaderAddress;
         }
     }
 }

@@ -1,4 +1,4 @@
-using Bleak.Native;
+using static Bleak.Native.Enumerations;
 
 namespace Bleak.PortableExecutable.Objects
 {
@@ -6,9 +6,9 @@ namespace Bleak.PortableExecutable.Objects
     {
         internal readonly ushort Offset;
 
-        internal readonly Enumerations.RelocationType Type;
+        internal readonly RelocationType Type;
 
-        internal Relocation(ushort offset, Enumerations.RelocationType type)
+        internal Relocation(ushort offset, RelocationType type)
         {
             Offset = offset;
 

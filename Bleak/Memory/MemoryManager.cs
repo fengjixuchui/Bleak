@@ -1,8 +1,9 @@
 using System;
 using System.Runtime.InteropServices;
-using Bleak.Handlers;
-using Bleak.Native;
+using Bleak.Shared.Handlers;
 using Microsoft.Win32.SafeHandles;
+using static Bleak.Native.Enumerations;
+using static Bleak.Native.PInvoke;
 
 namespace Bleak.Memory
 {
@@ -17,47 +18,18 @@ namespace Bleak.Memory
 
         internal IntPtr AllocateVirtualMemory(int allocationSize)
         {
-            // Allocate a region of virtual memory in the remote process
-
-            const Enumerations.AllocationType allocationType = Enumerations.AllocationType.Commit | Enumerations.AllocationType.Reserve;
-
-            var regionAddress = PInvoke.VirtualAllocEx(_processHandle, IntPtr.Zero, allocationSize, allocationType, Enumerations.MemoryProtection.ExecuteReadWrite);
-
-            if (regionAddress == IntPtr.Zero)
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to allocate virtual memory in the remote process");
-            }
-
-            return regionAddress;
+            return AllocateVirtualMemory(IntPtr.Zero, allocationSize);
         }
-
+        
         internal IntPtr AllocateVirtualMemory(IntPtr baseAddress, int allocationSize)
         {
-            // Allocate a region of virtual memory in the remote process at the specified address
+            const AllocationType allocationType = AllocationType.Commit | AllocationType.Reserve;
 
-            const Enumerations.AllocationType allocationType = Enumerations.AllocationType.Commit | Enumerations.AllocationType.Reserve;
-
-            var regionAddress = PInvoke.VirtualAllocEx(_processHandle, baseAddress, allocationSize, allocationType, Enumerations.MemoryProtection.ExecuteReadWrite);
+            var regionAddress = VirtualAllocEx(_processHandle, baseAddress, allocationSize, allocationType, MemoryProtection.ExecuteReadWrite);
 
             if (regionAddress == IntPtr.Zero)
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to allocate virtual memory in the remote process");
-            }
-
-            return regionAddress;
-        }
-
-        internal IntPtr AllocateVirtualMemory<TStructure>() where TStructure : struct
-        {
-            // Allocate a region of virtual memory in the remote process
-
-            const Enumerations.AllocationType allocationType = Enumerations.AllocationType.Commit | Enumerations.AllocationType.Reserve;
-
-            var regionAddress = PInvoke.VirtualAllocEx(_processHandle, IntPtr.Zero, Marshal.SizeOf<TStructure>(), allocationType, Enumerations.MemoryProtection.ExecuteReadWrite);
-
-            if (regionAddress == IntPtr.Zero)
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to allocate virtual memory in the remote process");
+                ExceptionHandler.ThrowWin32Exception("Failed to allocate a region of virtual memory in the remote process");
             }
 
             return regionAddress;
@@ -65,21 +37,17 @@ namespace Bleak.Memory
 
         internal void FreeVirtualMemory(IntPtr baseAddress)
         {
-            // Free a region of virtual memory in the remote process
-
-            if (!PInvoke.VirtualFreeEx(_processHandle, baseAddress, 0, Enumerations.FreeType.Release))
+            if (!VirtualFreeEx(_processHandle, baseAddress, 0, FreeType.Release))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to free virtual memory in the remote process");
+                ExceptionHandler.ThrowWin32Exception("Failed to free a region of virtual memory in the remote process");
             }
         }
 
-        internal Enumerations.MemoryProtection ProtectVirtualMemory(IntPtr baseAddress, int protectionSize, Enumerations.MemoryProtection protectionType)
+        internal MemoryProtection ProtectVirtualMemory(IntPtr baseAddress, int protectionSize, MemoryProtection protectionType)
         {
-            // Change the protection of a region of virtual memory in the remote process
-
-            if (!PInvoke.VirtualProtectEx(_processHandle, baseAddress, protectionSize, protectionType, out var oldProtectionType))
+            if (!VirtualProtectEx(_processHandle, baseAddress, protectionSize, protectionType, out var oldProtectionType))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to protect virtual memory in the remote process");
+                ExceptionHandler.ThrowWin32Exception("Failed to protect a region of virtual memory in the remote process");
             }
 
             return oldProtectionType;
@@ -87,90 +55,84 @@ namespace Bleak.Memory
 
         internal byte[] ReadVirtualMemory(IntPtr baseAddress, int bytesToRead)
         {
-            // Read the specified number of bytes from the region of virtual memory in the remote process
-
-            var bytesReadBuffer = Marshal.AllocHGlobal(bytesToRead);
-
-            if (!PInvoke.ReadProcessMemory(_processHandle, baseAddress, bytesReadBuffer, bytesToRead, out _))
+            var bytesBuffer = Marshal.AllocHGlobal(bytesToRead);
+            
+            if (!ReadProcessMemory(_processHandle, baseAddress, bytesBuffer, bytesToRead, IntPtr.Zero))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to read virtual memory from the remote process");
+                ExceptionHandler.ThrowWin32Exception("Failed to read from a region of virtual memory in the remote process");
             }
-
+            
             var bytesRead = new byte[bytesToRead];
+            
+            Marshal.Copy(bytesBuffer, bytesRead, 0, bytesToRead);
 
-            Marshal.Copy(bytesReadBuffer, bytesRead, 0, bytesToRead);
-
-            Marshal.FreeHGlobal(bytesReadBuffer);
-
+            Marshal.FreeHGlobal(bytesBuffer);
+            
             return bytesRead;
         }
-
+        
         internal TStructure ReadVirtualMemory<TStructure>(IntPtr baseAddress) where TStructure : struct
         {
             var structureSize = Marshal.SizeOf<TStructure>();
-
-            // Read the specified structure from the region of virtual memory in the remote process
-
+            
             var structureBuffer = Marshal.AllocHGlobal(structureSize);
-
-            if (!PInvoke.ReadProcessMemory(_processHandle, baseAddress, structureBuffer, structureSize, out _))
+            
+            if (!ReadProcessMemory(_processHandle, baseAddress, structureBuffer, structureSize, IntPtr.Zero))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to read virtual memory from the remote process");
+                ExceptionHandler.ThrowWin32Exception("Failed to read from a region of virtual memory in the remote process");
             }
 
-            var structure = Marshal.PtrToStructure<TStructure>(structureBuffer);
+            try
+            {
+                return Marshal.PtrToStructure<TStructure>(structureBuffer);
+            }
 
-            Marshal.FreeHGlobal(structureBuffer);
-
-            return structure;
+            finally
+            {
+                Marshal.FreeHGlobal(structureBuffer);
+            }
         }
-
+        
         internal void WriteVirtualMemory(IntPtr baseAddress, byte[] bytesToWrite)
         {
-            // Adjust the protection of the region of virtual memory to ensure it has write privileges
+            // Adjust the protection of the virtual memory region to ensure it has write privileges
+            
+            var originalProtectionType = ProtectVirtualMemory(baseAddress, bytesToWrite.Length, MemoryProtection.ReadWrite);
 
-            var originalProtectionType = ProtectVirtualMemory(baseAddress, bytesToWrite.Length, Enumerations.MemoryProtection.ReadWrite);
-
-            // Write the bytes into the region of virtual memory in the remote process
-
-            var bytesToWriteHandle = GCHandle.Alloc(bytesToWrite, GCHandleType.Pinned);
-
-            if (!PInvoke.WriteProcessMemory(_processHandle, baseAddress, bytesToWriteHandle.AddrOfPinnedObject(), bytesToWrite.Length, out _))
+            var bytesToWriteBufferHandle = GCHandle.Alloc(bytesToWrite, GCHandleType.Pinned);
+            
+            if (!WriteProcessMemory(_processHandle, baseAddress, bytesToWriteBufferHandle.AddrOfPinnedObject(), bytesToWrite.Length, IntPtr.Zero))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to write virtual memory in the remote process");
+                ExceptionHandler.ThrowWin32Exception("Failed to write into a region of virtual memory in the remote process");
             }
 
-            // Restore the original protection of the region of virtual memory
-
+            // Restore the original protection of the virtual memory region
+            
             ProtectVirtualMemory(baseAddress, bytesToWrite.Length, originalProtectionType);
-
-            bytesToWriteHandle.Free();
+            
+            bytesToWriteBufferHandle.Free();
         }
-
+        
         internal void WriteVirtualMemory<TStructure>(IntPtr baseAddress, TStructure structureToWrite) where TStructure : struct
         {
             var structureSize = Marshal.SizeOf<TStructure>();
+            
+            // Adjust the protection of the virtual memory region to ensure it has write privileges
+            
+            var originalProtectionType = ProtectVirtualMemory(baseAddress, structureSize, MemoryProtection.ReadWrite);
 
-            // Adjust the protection of the region of virtual memory to ensure it has write privileges
-
-            var originalProtectionType = ProtectVirtualMemory(baseAddress, structureSize, Enumerations.MemoryProtection.ReadWrite);
-
-            // Write the structure into the region of virtual memory in the remote process
-
-            var structureBuffer = Marshal.AllocHGlobal(structureSize);
-
-            Marshal.StructureToPtr(structureToWrite, structureBuffer, false);
-
-            if (!PInvoke.WriteProcessMemory(_processHandle, baseAddress, structureBuffer, structureSize, out _))
+            var structureToWriteBufferHandle = GCHandle.Alloc(structureToWrite, GCHandleType.Pinned);
+            
+            if (!WriteProcessMemory(_processHandle, baseAddress, structureToWriteBufferHandle.AddrOfPinnedObject(), structureSize, IntPtr.Zero))
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to write virtual memory in the remote process");
+                ExceptionHandler.ThrowWin32Exception("Failed to write into a region of virtual memory in the remote process");
             }
 
-            // Restore the original protection of the region of virtual memory
-
+            // Restore the original protection of the virtual memory region
+            
             ProtectVirtualMemory(baseAddress, structureSize, originalProtectionType);
-
-            Marshal.FreeHGlobal(structureBuffer);
+            
+            structureToWriteBufferHandle.Free();
         }
     }
 }
