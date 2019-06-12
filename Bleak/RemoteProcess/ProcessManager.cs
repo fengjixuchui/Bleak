@@ -124,9 +124,7 @@ namespace Bleak.RemoteProcess
             
             // Create a thread to call the shellcode in the remote process
 
-            var ntStatus = NtCreateThreadEx(out var threadHandle, ThreadAccessMask.AllAccess, IntPtr.Zero, Process.SafeHandle, shellcodeBuffer, IntPtr.Zero, ThreadCreationFlags.HideFromDebugger, 0, 0, 0, IntPtr.Zero);
-            
-            //var ntStatus = RtlCreateUserThread(Process.SafeHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, shellcodeBuffer, IntPtr.Zero, out var threadHandle, IntPtr.Zero); 
+            var ntStatus = RtlCreateUserThread(Process.SafeHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, shellcodeBuffer, IntPtr.Zero, out var threadHandle, IntPtr.Zero);
             
             if (ntStatus != NtStatus.Success)
             {

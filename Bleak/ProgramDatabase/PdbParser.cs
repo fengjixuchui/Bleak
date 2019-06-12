@@ -16,17 +16,17 @@ namespace Bleak.ProgramDatabase
 {
     internal class PdbParser
     {
-        internal readonly List<PdbSymbol> PdbSymbols;
-
         internal readonly Module Module;
+        
+        internal readonly List<PdbSymbol> PdbSymbols;
 
         private string _pdbPath;
 
         internal PdbParser(Module module)
         {
-            PdbSymbols = Task.Run(GetPdbSymbols).Result;
-
             Module = module;
+            
+            PdbSymbols = GetPdbSymbols().Result;
         }
 
         private async Task DownloadPdb()
@@ -35,7 +35,7 @@ namespace Bleak.ProgramDatabase
             
             // Create the URI for the PDB
 
-            var pdbUri = new Uri($"http://msdl.microsoft.com/download/symbols/{debugData.Path}/{debugData.Guid}/{debugData.Age}/{debugData.Path}");
+            var pdbUri = new Uri($"http://msdl.microsoft.com/download/symbols/{debugData.Path}/{debugData.Guid.ToString().Replace("-", "")}{debugData.Age}/{debugData.Path}");
 
             // Ensure a directory exists on disk for the PDB
 
@@ -44,18 +44,21 @@ namespace Bleak.ProgramDatabase
             var pdbName = $"{debugData.Path}-{debugData.Guid}-{debugData.Age}.pdb";
 
             _pdbPath = Path.Combine(directoryInfo.FullName, pdbName);
-            
-            var webClient = new WebClient();
 
-            webClient.OpenRead(pdbUri);
-            
             // Ensure the PDB hasn't already been downloaded
 
-            if (directoryInfo.EnumerateFiles().Any(file => file.Name == pdbName && file.Length == int.Parse(webClient.ResponseHeaders["Content-Length"])))
-            {
-                return;
-            }
+            var webRequest = WebRequest.Create(pdbUri);
 
+            webRequest.Method = "HEAD";
+
+            using (var webResponse = webRequest.GetResponse())
+            {
+                if (directoryInfo.EnumerateFiles().Any(file => file.Name == pdbName && file.Length == webResponse.ContentLength))
+                {
+                    return;
+                }
+            }
+            
             // Clear the directory
             
             foreach (var file in directoryInfo.EnumerateFiles())
@@ -77,8 +80,11 @@ namespace Bleak.ProgramDatabase
             {
                 throw new WebException("Failed to ping the Microsoft symbol server");
             }
-            
-            await webClient.DownloadFileTaskAsync(pdbUri, _pdbPath);
+
+            using (var webClient = new WebClient())
+            {
+                await webClient.DownloadFileTaskAsync(pdbUri, _pdbPath);
+            }
         }
 
         private async Task<List<PdbSymbol>> GetPdbSymbols()

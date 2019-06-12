@@ -33,7 +33,7 @@ A Windows native DLL injection library written in C# that supports several metho
 
 ### Getting Started
 
-After installing Bleak, you will want to ensure that your project is being compiled under AnyCPU or x64. This will ensure that you are able to inject into both x86 and x64 processes from the same project.
+After installing Bleak, you will want to ensure that your project is being compiled under AnyCPU or x64. This will ensure that you are able to inject into both WOW64 and x64 processes from the same project.
 
 ----
 
@@ -66,8 +66,6 @@ using (var injector = new Injector(InjectionMethod.CreateThread, "processName", 
 
 ### Overloads
 
-Several overloads exist in this library.
-
 The first of these allows you to use a process ID instead of a process name.
 
 ```csharp
@@ -90,8 +88,6 @@ var injector = new Injector(InjectionMethod, "processName", dllBytes);
 * Manual injection only supports structured exception handling. This means that you cannot use vectored exception handling (C++ uses this) if you wish to use this method of injection.
 
 * x86 Manual injection relies on a PDB being present for ntdll.dll, and so, the first time this method is used with a x86 process, a PDB for ntdll.dll will be downloaded and cached in the temporary folder. Note that anytime your system updates, a new PDB version may need to be downloaded and re-cached in the temporary folder. This process make take a few seconds depending on your connection speed.
-
-* No support for native x86 systems or Windows versions older than 10.
 
 ----
 

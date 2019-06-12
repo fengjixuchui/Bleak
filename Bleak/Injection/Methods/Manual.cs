@@ -148,7 +148,7 @@ namespace Bleak.Injection.Methods
 
         private void CallEntryPoint(IntPtr entryPointAddress)
         {
-            if (!_injectionWrapper.ProcessManager.CallFunction<bool>(CallingConvention.StdCall, entryPointAddress, (ulong) _remoteDllAddress, DllProcessAttach, 0))
+            if (!_injectionWrapper.ProcessManager.CallFunction<bool>(CallingConvention.StdCall, entryPointAddress, (ulong)_remoteDllAddress, DllProcessAttach, 0))
             {
                 throw new Win32Exception("Failed to call the entry point of the DLL or a TLS callback in the remote process");
             }
@@ -361,7 +361,7 @@ namespace Bleak.Injection.Methods
 
             if (delta == 0)
             {
-                // The DLL is loaded at its preferred base address then no relocations need to be applied
+                // The DLL is loaded at its preferred base address and no relocations need to be applied
                 
                 return;
             }

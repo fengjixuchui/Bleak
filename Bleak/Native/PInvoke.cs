@@ -64,9 +64,6 @@ namespace Bleak.Native
         // ntdll.dll imports
         
         [DllImport("ntdll.dll", SetLastError = true)]
-        internal static extern NtStatus NtCreateThreadEx(out SafeThreadHandle threadHandle, ThreadAccessMask desiredAccess, IntPtr objectAttributesBuffer, SafeProcessHandle processHandle, IntPtr startAddress, IntPtr parameter, ThreadCreationFlags creationFlags, int stackZeroBits, int sizeOfStack, int maximumStackSize, IntPtr attributeListBuffer);
-        
-        [DllImport("ntdll.dll", SetLastError = true)]
         internal static extern NtStatus NtQueryInformationProcess(SafeProcessHandle processHandle, ProcessInformationClass processInformationClass, IntPtr processInformationBuffer, int bufferSize, IntPtr returnLengthBuffer);
         
         [DllImport("ntdll.dll")]
