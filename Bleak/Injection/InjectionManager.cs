@@ -1,179 +1,165 @@
 using System;
-using System.Collections.Generic;
+using System.Diagnostics;
 using Bleak.Injection.Extensions;
 using Bleak.Injection.Interfaces;
+using Bleak.Injection.Methods;
 using Bleak.Injection.Objects;
-using Bleak.Shared.Handlers;
+using Bleak.Shared;
 
 namespace Bleak.Injection
 {
     internal class InjectionManager : IDisposable
     {
-        private readonly InjectionContext _injectionContext;
-        
-        private readonly Dictionary<string, IInjectionExtension> _injectionExtensionCache;
+        private readonly EjectDll _ejectDll;
 
+        private readonly HideDllFromPeb _hideDllFromPeb;
+        
+        private bool _injected;
+        
         private readonly IInjectionMethod _injectionMethod;
 
         private readonly InjectionWrapper _injectionWrapper;
+        
+        private IntPtr _remoteDllAddress;
 
-        internal InjectionManager(InjectionMethod injectionMethod, int processId, byte[] dllBytes)
+        internal InjectionManager(int processId, byte[] dllBytes, InjectionMethod injectionMethod, InjectionFlags injectionFlags)
         {
-            _injectionContext = new InjectionContext();
-            
-            _injectionWrapper = new InjectionWrapper(injectionMethod, processId, dllBytes);
-            
-            _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
-            {
-                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
-                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
-                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
-            };
-
-            var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
-
-            _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-            
-            // Ensure the architecture of the DLL is valid
+            _injectionWrapper = new InjectionWrapper(GetProcess(processId), dllBytes, injectionMethod, injectionFlags);
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
+            
+            _ejectDll = new EjectDll(_injectionWrapper);
+            
+            _hideDllFromPeb = new HideDllFromPeb(_injectionWrapper);
+            
+            _injectionMethod = InitialiseInjectionMethod(injectionMethod);
         }
-
-        internal InjectionManager(InjectionMethod injectionMethod, int processId, string dllPath)
+        
+        internal InjectionManager(int processId, string dllPath, InjectionMethod injectionMethod, InjectionFlags injectionFlags)
         {
-            _injectionContext = new InjectionContext();
-            
-            _injectionWrapper = new InjectionWrapper(injectionMethod, processId, dllPath);
-            
-            _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
-            {
-                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
-                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
-                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
-            };
-            
-            var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
-
-            _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-            
-            // Ensure the architecture of the DLL is valid
+            _injectionWrapper = new InjectionWrapper(GetProcess(processId), dllPath, injectionMethod, injectionFlags);
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
+            
+            _ejectDll = new EjectDll(_injectionWrapper);
+            
+            _hideDllFromPeb = new HideDllFromPeb(_injectionWrapper);
+            
+            _injectionMethod = InitialiseInjectionMethod(injectionMethod);
         }
-
-        internal InjectionManager(InjectionMethod injectionMethod, string processName, byte[] dllBytes)
+        
+        internal InjectionManager(string processName, byte[] dllBytes, InjectionMethod injectionMethod, InjectionFlags injectionFlags)
         {
-            _injectionContext = new InjectionContext();
-            
-            _injectionWrapper = new InjectionWrapper(injectionMethod, processName, dllBytes);
-            
-            _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
-            {
-                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
-                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
-                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
-            };
-            
-            var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
-
-            _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-            
-            // Ensure the architecture of the DLL is valid
+            _injectionWrapper = new InjectionWrapper(GetProcess(processName), dllBytes, injectionMethod, injectionFlags);
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
+            
+            _ejectDll = new EjectDll(_injectionWrapper);
+            
+            _hideDllFromPeb = new HideDllFromPeb(_injectionWrapper);
+            
+            _injectionMethod = InitialiseInjectionMethod(injectionMethod);
         }
-
-        internal InjectionManager(InjectionMethod injectionMethod, string processName, string dllPath)
+        
+        internal InjectionManager(string processName, string dllPath, InjectionMethod injectionMethod, InjectionFlags injectionFlags)
         {
-            _injectionContext = new InjectionContext();
-            
-            _injectionWrapper = new InjectionWrapper(injectionMethod, processName, dllPath);
-            
-            _injectionExtensionCache = new Dictionary<string, IInjectionExtension>
-            {
-                {nameof(EjectDll), new EjectDll(_injectionWrapper)},
-                {nameof(HideDllFromPeb), new HideDllFromPeb(_injectionWrapper)},
-                {nameof(RandomiseDllHeaders), new RandomiseDllHeaders(_injectionWrapper)}
-            };
-            
-            var injectionMethodType = Type.GetType("Bleak.Injection.Methods." + injectionMethod);
-
-            _injectionMethod = (IInjectionMethod) Activator.CreateInstance(injectionMethodType, _injectionWrapper);
-            
-            // Ensure the architecture of the DLL is valid
+            _injectionWrapper = new InjectionWrapper(GetProcess(processName), dllPath, injectionMethod, injectionFlags);
 
             ValidationHandler.ValidateDllArchitecture(_injectionWrapper);
+            
+            _ejectDll = new EjectDll(_injectionWrapper);
+            
+            _hideDllFromPeb = new HideDllFromPeb(_injectionWrapper);
+            
+            _injectionMethod = InitialiseInjectionMethod(injectionMethod);
         }
         
         public void Dispose()
         {
-            _injectionWrapper.Dispose();
-        }
-        
-        internal bool EjectDll()
-        {
-            if (!_injectionContext.Injected)
-            {
-                return true;
-            }
-
-            if (_injectionExtensionCache[nameof(EjectDll)].Call(_injectionContext))
-            {
-                _injectionContext.DllBaseAddress = IntPtr.Zero;
-
-                _injectionContext.Injected = false;
-            }
-            
-            return !_injectionContext.Injected;
-        }
-        
-        internal bool HideDllFromPeb()
-        {
-            if (_injectionContext.PebEntryHidden || !_injectionContext.Injected || _injectionWrapper.InjectionMethod == InjectionMethod.Manual)
-            {
-                return true;
-            }
-
-            if (_injectionExtensionCache[nameof(HideDllFromPeb)].Call(_injectionContext))
-            {
-                _injectionContext.PebEntryHidden = true;
-            }
-            
-            return _injectionContext.PebEntryHidden;
+            _injectionMethod.Dispose();
         }
 
         internal IntPtr InjectDll()
         {
-            if (_injectionContext.Injected)
+            if (_injected)
             {
-                return _injectionContext.DllBaseAddress;
+                return _remoteDllAddress;
             }
             
-            _injectionContext.DllBaseAddress = _injectionMethod.Call();
-            
-            if (_injectionContext.DllBaseAddress != IntPtr.Zero)
+            _remoteDllAddress = _injectionMethod.Call();
+
+            _injected = true;
+
+            if (_injectionWrapper.InjectionMethod != InjectionMethod.ManualMap && _injectionWrapper.InjectionFlags.HasFlag(InjectionFlags.HideDllFromPeb))
             {
-                _injectionWrapper.ProcessManager.Refresh();
-                
-                _injectionContext.Injected = true;
+                _hideDllFromPeb.Call();
             }
             
-            return _injectionContext.DllBaseAddress;
+            return _remoteDllAddress;
         }
 
-        internal bool RandomiseDllHeaders()
+        internal void EjectDll()
         {
-            if (_injectionContext.HeadersRandomised || !_injectionContext.Injected)
+            if (!_injected)
             {
-                return true;
+                return;
+            }
+            
+            _ejectDll.Call(_remoteDllAddress);
+            
+            _injected = false;
+        }
+
+        private Process GetProcess(int processId)
+        {
+            try
+            {
+                return Process.GetProcessById(processId);
             }
 
-            if(_injectionExtensionCache[nameof(RandomiseDllHeaders)].Call(_injectionContext))
+            catch (ArgumentException)
             {
-                _injectionContext.HeadersRandomised = true;
+                throw new ArgumentException($"No process with the id {processId} is currently running");
+            }
+        }
+        
+        private Process GetProcess(string processName)
+        {
+            try
+            {
+                return Process.GetProcessesByName(processName)[0];
             }
 
-            return _injectionContext.HeadersRandomised;
+            catch (IndexOutOfRangeException)
+            {
+                throw new ArgumentException($"No process with the name {processName} is currently running");
+            }
+        }
+
+        private IInjectionMethod InitialiseInjectionMethod(InjectionMethod injectionMethod)
+        {
+            switch (injectionMethod)
+            {
+                case InjectionMethod.CreateThread:
+                {
+                    return new CreateThread(_injectionWrapper);
+                }
+
+                case InjectionMethod.HijackThread:
+                {
+                    return new HijackThread(_injectionWrapper);
+                }
+
+                case InjectionMethod.ManualMap:
+                {
+                    return new ManualMap(_injectionWrapper);
+                }
+
+                default:
+                {
+                    return new CreateThread(_injectionWrapper);
+                }
+            }
         }
     }
 }

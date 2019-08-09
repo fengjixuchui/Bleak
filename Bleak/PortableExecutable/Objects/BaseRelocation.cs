@@ -4,11 +4,11 @@ namespace Bleak.PortableExecutable.Objects
 {
     internal class BaseRelocation
     {
-        internal readonly ulong Offset;
-        
+        internal readonly int Offset;
+
         internal readonly List<Relocation> Relocations;
-        
-        internal BaseRelocation(ulong offset, List<Relocation> relocations)
+
+        internal BaseRelocation(int offset, List<Relocation> relocations)
         {
             Offset = offset;
 

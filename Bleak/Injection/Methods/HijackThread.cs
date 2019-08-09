@@ -1,217 +1,247 @@
 using System;
-using System.Diagnostics;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using Bleak.Assembly.Objects;
 using Bleak.Injection.Interfaces;
 using Bleak.Injection.Objects;
-using Bleak.Shared.Handlers;
-using static Bleak.Native.Enumerations;
-using static Bleak.Native.PInvoke;
-using static Bleak.Native.Structures;
+using Bleak.Native;
+using Bleak.Native.Enumerations;
+using Bleak.Native.PInvoke;
+using Bleak.Native.Structures;
+using Bleak.PortableExecutable;
+using Bleak.RemoteProcess;
+using Bleak.Shared.Exceptions;
 
 namespace Bleak.Injection.Methods
 {
     internal class HijackThread : IInjectionMethod
     {
-        private readonly InjectionWrapper _injectionWrapper;
+        private readonly string _dllPath;
 
-        public HijackThread(InjectionWrapper injectionWrapper)
+        private readonly InjectionFlags _injectionFlags;
+        
+        private readonly PeImage _peImage;
+
+        private readonly ManagedProcess _process;
+        
+        internal HijackThread(InjectionWrapper injectionWrapper)
         {
-            _injectionWrapper = injectionWrapper;
+            _dllPath = injectionWrapper.DllPath;
+
+            _injectionFlags = injectionWrapper.InjectionFlags;
+
+            _peImage = injectionWrapper.PeImage;
+
+            _process = injectionWrapper.Process;
         }
         
+        public void Dispose()
+        {
+            _peImage.Dispose();
+            
+            _process.Dispose();
+        }
+
         public IntPtr Call()
         {
             // Write the DLL path into the remote process
 
-            var dllPathBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(_injectionWrapper.DllPath.Length);
-
-            var dllPathBytes = Encoding.Unicode.GetBytes(_injectionWrapper.DllPath);
-
-            _injectionWrapper.MemoryManager.WriteVirtualMemory(dllPathBuffer, dllPathBytes);
+            var dllPathAddress = _process.MemoryManager.AllocateVirtualMemory(_dllPath.Length, MemoryProtectionType.ReadWrite);
+            
+            _process.MemoryManager.WriteVirtualMemory(dllPathAddress, Encoding.Unicode.GetBytes(_dllPath));
             
             // Write a UnicodeString representing the DLL path into the remote process
 
-            IntPtr unicodeStringBuffer;
+            IntPtr dllPathUnicodeStringAddress;
 
-            if (_injectionWrapper.ProcessManager.IsWow64)
+            if (_process.IsWow64)
             {
-                var unicodeString = new UnicodeString32(_injectionWrapper.DllPath)
-                {
-                    Buffer = (uint) dllPathBuffer
-                };
+                var dllPathUnicodeString = new UnicodeString32(_dllPath, dllPathAddress);
 
-                unicodeStringBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString32>());
-
-                _injectionWrapper.MemoryManager.WriteVirtualMemory(unicodeStringBuffer, unicodeString);
+                dllPathUnicodeStringAddress = _process.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString32>(), MemoryProtectionType.ReadWrite);
+                
+                _process.MemoryManager.WriteVirtualMemory(dllPathUnicodeStringAddress, dllPathUnicodeString);
             }
 
             else
             {
-                var unicodeString = new UnicodeString64(_injectionWrapper.DllPath)
-                {
-                    Buffer = (ulong) dllPathBuffer
-                };
+                var dllPathUnicodeString = new UnicodeString64(_dllPath, dllPathAddress);
 
-                unicodeStringBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString64>());
-
-                _injectionWrapper.MemoryManager.WriteVirtualMemory(unicodeStringBuffer, unicodeString);
+                dllPathUnicodeStringAddress = _process.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString64>(), MemoryProtectionType.ReadWrite);
+                
+                _process.MemoryManager.WriteVirtualMemory(dllPathUnicodeStringAddress, dllPathUnicodeString);
             }
             
-            // Get the address of the LdrLoadDll function in the remote process
+            // Write the shellcode used to call LdrLoadDll into the remote process
             
-            var ldrLoadDllAddress = _injectionWrapper.ProcessManager.GetFunctionAddress("ntdll.dll", "LdrLoadDll");
+            var ldrLoadDllAddress = _process.GetFunctionAddress("ntdll.dll", "LdrLoadDll");
             
-            var returnBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(sizeof(uint));
+            var moduleHandleAddress = _process.MemoryManager.AllocateVirtualMemory(IntPtr.Size, MemoryProtectionType.ReadWrite);
 
-            var moduleHandleBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(IntPtr.Size);
+            var shellcodeReturnAddress = _process.MemoryManager.AllocateVirtualMemory(sizeof(int), MemoryProtectionType.ReadWrite);
             
-            // Write the shellcode used to call LdrLoadDll from a thread into the remote process
-
-            var shellcode = _injectionWrapper.Assembler.AssembleThreadFunctionCall(CallingConvention.StdCall, ldrLoadDllAddress, returnBuffer,0, 0, (ulong) unicodeStringBuffer, (ulong) moduleHandleBuffer);
+            var shellcode = _process.Assembler.AssembleThreadFunctionCall(new FunctionCall(ldrLoadDllAddress, CallingConvention.StdCall, new[] {0, 0, (long) dllPathUnicodeStringAddress, (long) moduleHandleAddress}, shellcodeReturnAddress));
             
-            var shellcodeBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(shellcode.Length);
+            var shellcodeAddress = _process.MemoryManager.AllocateVirtualMemory(shellcode.Length, MemoryProtectionType.ReadWrite);
             
-            _injectionWrapper.MemoryManager.WriteVirtualMemory(shellcodeBuffer, shellcode);
+            _process.MemoryManager.WriteVirtualMemory(shellcodeAddress, shellcode);
+            
+            _process.MemoryManager.ProtectVirtualMemory(shellcodeAddress, shellcode.Length, MemoryProtectionType.ExecuteRead);
             
             // Open a handle to the first thread in the remote process
+            
+            var firstThreadHandle = Kernel32.OpenThread(Constants.ThreadAllAccess, false, _process.Process.Threads[0].Id);
 
-            var firstThreadHandle = OpenThread(ThreadAccessMask.AllAccess, false, _injectionWrapper.ProcessManager.Process.Threads[0].Id);
+            if (firstThreadHandle is null)
+            {
+                throw new PInvokeException("Failed to call OpenThread");
+            }
 
-            if (_injectionWrapper.ProcessManager.IsWow64)
+            if (_process.IsWow64)
             {
                 // Suspend the thread
 
-                if (Wow64SuspendThread(firstThreadHandle) == -1)
+                if (Kernel32.Wow64SuspendThread(firstThreadHandle) == -1)
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to suspend a thread in the remote process");
+                    throw new PInvokeException("Failed to call Wow64SuspendThread");
                 }
-
-                var threadContextBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<Wow64Context>());
-
-                Marshal.StructureToPtr(new Wow64Context {ContextFlags = ContextFlags.Control}, threadContextBuffer, false);
-
+                
                 // Get the context of the thread
+                
+                var threadContext = new Context32 {ContextFlags = ContextFlags.Integer};
+                
+                var threadContextBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<Context32>());
+                
+                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
 
-                if (!Wow64GetThreadContext(firstThreadHandle, threadContextBuffer))
+                if (!Kernel32.Wow64GetThreadContext(firstThreadHandle, threadContextBuffer))
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to get the context of a thread in the remote process");
+                    throw new PInvokeException("Failed to call Wow64GetThreadContext");
                 }
 
-                var threadContext = Marshal.PtrToStructure<Wow64Context>(threadContextBuffer);
-
+                threadContext = Marshal.PtrToStructure<Context32>(threadContextBuffer);
+                
                 // Write the original instruction pointer of the thread into the top of its stack
-
-                threadContext.Esp -= sizeof(uint);
-
-                _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) threadContext.Esp, threadContext.Eip);
-
-                // Overwrite the instruction pointer of the thread with the address of the shellcode buffer
-
-                threadContext.Eip = (uint) shellcodeBuffer;
-
-                Marshal.StructureToPtr(threadContext, threadContextBuffer, true);
-
+                
+                threadContext.Esp -= sizeof(int);
+                
+                _process.MemoryManager.WriteVirtualMemory((IntPtr) threadContext.Esp, threadContext.Eip);
+                
+                // Overwrite the instruction pointer of the thread with the address of the shellcode
+                
+                threadContext.Eip = (int) shellcodeAddress;
+                
+                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
+                
                 // Update the context of the thread
 
-                if (!Wow64SetThreadContext(firstThreadHandle, threadContextBuffer))
+                if (!Kernel32.Wow64SetThreadContext(firstThreadHandle, threadContextBuffer))
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to set the context of a thread in the remote process");
+                    throw new PInvokeException("Failed to call Wow64SetThreadContext");
                 }
+                
+                Marshal.FreeHGlobal(threadContextBuffer);
             }
 
             else
             {
                 // Suspend the thread
 
-                if (SuspendThread(firstThreadHandle) == -1)
+                if (Kernel32.SuspendThread(firstThreadHandle) == -1)
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to suspend a thread in the remote process");
+                    throw new PInvokeException("Failed to call SuspendThread");
                 }
-
-                var threadContextBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<Context>());
-
-                Marshal.StructureToPtr(new Context {ContextFlags = ContextFlags.Control}, threadContextBuffer, false);
-
+                
                 // Get the context of the thread
-
-                if (!GetThreadContext(firstThreadHandle, threadContextBuffer))
+                
+                var threadContext = new Context64 {ContextFlags = ContextFlags.Control};
+                
+                var threadContextBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<Context64>());
+                
+                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
+                
+                if (!Kernel32.GetThreadContext(firstThreadHandle, threadContextBuffer))
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to get the context of a thread in the remote process");
+                    throw new PInvokeException("Failed to call GetThreadContext");
                 }
-
-                var threadContext = Marshal.PtrToStructure<Context>(threadContextBuffer);
-
+                
+                threadContext = Marshal.PtrToStructure<Context64>(threadContextBuffer);
+                
                 // Write the original instruction pointer of the thread into the top of its stack
-
-                threadContext.Rsp -= sizeof(ulong);
-
-                _injectionWrapper.MemoryManager.WriteVirtualMemory((IntPtr) threadContext.Rsp, threadContext.Rip);
-
-                // Overwrite the instruction pointer of the thread with the address of the shellcode buffer
-
-                threadContext.Rip = (ulong) shellcodeBuffer;
-
-                Marshal.StructureToPtr(threadContext, threadContextBuffer, true);
-
+                
+                threadContext.Rsp -= sizeof(long);
+                
+                _process.MemoryManager.WriteVirtualMemory((IntPtr) threadContext.Rsp, threadContext.Rip);
+                
+                // Overwrite the instruction pointer of the thread with the address of the shellcode
+                
+                threadContext.Rip = (long) shellcodeAddress;
+                
+                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
+                
                 // Update the context of the thread
-
-                if (!SetThreadContext(firstThreadHandle, threadContextBuffer))
+                
+                if (!Kernel32.SetThreadContext(firstThreadHandle, threadContextBuffer))
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to set the context of a thread in the remote process");
+                    throw new PInvokeException("Failed to call SetThreadContext");
                 }
+                
+                Marshal.FreeHGlobal(threadContextBuffer);
             }
             
-            // Flush the instruction cache of the remote process to ensure all memory operations have been completed
-
-            if (!FlushInstructionCache(Process.GetCurrentProcess().SafeHandle, IntPtr.Zero, 0))
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to flush the instruction cache of the remote process");
-            }
+            // Send a message to the thread to ensure it executes the shellcode
+            
+            User32.PostThreadMessage(_process.Process.Threads[0].Id, MessageType.Null, IntPtr.Zero, IntPtr.Zero);
             
             // Resume the thread
 
-            if (ResumeThread(firstThreadHandle) == -1)
+            if (Kernel32.ResumeThread(firstThreadHandle) == -1)
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to resume a thread in the remote process");
+                throw new PInvokeException("Failed to call ResumeThread");
             }
-
+            
             firstThreadHandle.Dispose();
             
-            // Send a message to the thread to ensure it resumes
+            var shellcodeReturn = _process.MemoryManager.ReadVirtualMemory<int>(shellcodeReturnAddress);
 
-            PostThreadMessage(_injectionWrapper.ProcessManager.Process.Threads[0].Id, WindowsMessage.Keydown, VirtualKey.LeftButton, IntPtr.Zero);
-            
-            // Read the returned value of LdrLoadDll from the buffer
-
-            var ntStatus = _injectionWrapper.MemoryManager.ReadVirtualMemory<uint>(returnBuffer);
-
-            if ((NtStatus) ntStatus != NtStatus.Success)
+            if ((NtStatus) shellcodeReturn != NtStatus.Success)
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to call LdrLoadDll in the remote process", (NtStatus) ntStatus);
+                throw new RemoteFunctionCallException("Failed to call LdrLoadDll", (NtStatus) shellcodeReturn);
             }
             
-            while (_injectionWrapper.ProcessManager.Modules.All(module => module.FilePath != _injectionWrapper.DllPath))
+            // Ensure the DLL is loaded before freeing any memory
+            
+            while (_process.Modules.TrueForAll(module => module.FilePath != _dllPath))
             {
-                _injectionWrapper.ProcessManager.Refresh();
+                _process.Refresh();
             }
             
-            _injectionWrapper.MemoryManager.FreeVirtualMemory(dllPathBuffer);
+            _process.MemoryManager.FreeVirtualMemory(dllPathAddress);
 
-            _injectionWrapper.MemoryManager.FreeVirtualMemory(unicodeStringBuffer);
+            _process.MemoryManager.FreeVirtualMemory(dllPathUnicodeStringAddress);
             
-            try
-            {
-                // Read the base address of the DLL that was loaded in the remote process
+            _process.MemoryManager.FreeVirtualMemory(shellcodeReturnAddress);
+            
+            // Read the address of the DLL that was loaded in the remote process
+            
+            var remoteDllAddress = _process.MemoryManager.ReadVirtualMemory<IntPtr>(moduleHandleAddress);
 
-                return _injectionWrapper.MemoryManager.ReadVirtualMemory<IntPtr>(moduleHandleBuffer);
-            }
+            _process.MemoryManager.FreeVirtualMemory(moduleHandleAddress);
 
-            finally
+            if (!_injectionFlags.HasFlag(InjectionFlags.RandomiseDllHeaders))
             {
-                _injectionWrapper.MemoryManager.FreeVirtualMemory(moduleHandleBuffer);
+                return remoteDllAddress;
             }
+            
+            // Write over the header region of the DLL with random bytes
+                
+            var randomBuffer = new byte[_peImage.PeHeaders.PEHeader.SizeOfHeaders];
+
+            new Random().NextBytes(randomBuffer);
+
+            _process.MemoryManager.WriteVirtualMemory(remoteDllAddress, randomBuffer);
+
+            return remoteDllAddress;
         }
     }
 }

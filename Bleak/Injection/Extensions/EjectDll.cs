@@ -1,76 +1,85 @@
 using System;
-using System.ComponentModel;
+using System.Linq;
 using System.Runtime.InteropServices;
-using Bleak.Injection.Interfaces;
+using System.Text.RegularExpressions;
 using Bleak.Injection.Objects;
-using Bleak.Shared;
-using static Bleak.Native.Constants;
+using Bleak.Native;
+using Bleak.Native.PInvoke;
+using Bleak.PortableExecutable;
+using Bleak.RemoteProcess;
+using Bleak.Shared.Exceptions;
 
 namespace Bleak.Injection.Extensions
 {
-    internal class EjectDll : IInjectionExtension
+    internal class EjectDll
     {
-        private readonly InjectionWrapper _injectionWrapper;
-
-        public EjectDll(InjectionWrapper injectionWrapper)
-        {
-            _injectionWrapper = injectionWrapper;
-        }
+        private readonly InjectionMethod _injectionMethod;
         
-        public bool Call(InjectionContext injectionContext)
-        {
-            var dllBaseAddress = injectionContext.DllBaseAddress;
+        private readonly InjectionFlags _injectionFlags;
+        
+        private readonly PeImage _peImage;
 
-            if (_injectionWrapper.InjectionMethod == InjectionMethod.Manual)
+        private readonly ManagedProcess _process;
+
+        internal EjectDll(InjectionWrapper injectionWrapper)
+        {
+            _injectionMethod = injectionWrapper.InjectionMethod;
+            
+            _injectionFlags = injectionWrapper.InjectionFlags;
+            
+            _peImage = injectionWrapper.PeImage;
+            
+            _process = injectionWrapper.Process;
+        }
+
+        internal void Call(IntPtr remoteDllAddress)
+        {
+            if (_injectionMethod == InjectionMethod.ManualMap || _injectionFlags.HasFlag(InjectionFlags.HideDllFromPeb))
             {
                 // Call the entry point of the DLL with DllProcessDetach
+
+                if (!_process.CallFunction<bool>(CallingConvention.StdCall, remoteDllAddress + _peImage.PeHeaders.PEHeader.AddressOfEntryPoint, (long) remoteDllAddress, Constants.DllProcessDetach, 0))
+                {
+                    throw new RemoteFunctionCallException("Failed to call the entry point of the DLL");
+                }
                 
-                if (!_injectionWrapper.ProcessManager.CallFunction<bool>(CallingConvention.StdCall, (IntPtr) _injectionWrapper.PeParser.PeHeaders.PEHeader.AddressOfEntryPoint, (ulong) dllBaseAddress, DllProcessDetach, 0))
+                // Remove the entry for the DLL from the LdrpInvertedFunctionTable
+                
+                var rtRemoveInvertedFunctionTableAddress = _process.PdbFile.Value.GetSymbolAddress(new Regex("RtlRemoveInvertedFunctionTable"));
+            
+                _process.CallFunction(CallingConvention.FastCall, rtRemoveInvertedFunctionTableAddress, (long) remoteDllAddress);
+                
+                // Decrease the reference count of the DLL dependencies
+                
+                var freeLibraryAddress = _process.GetFunctionAddress("kernel32.dll", "FreeLibrary");
+                
+                if (_peImage.ImportedFunctions.Value.GroupBy(importedFunction => importedFunction.Dll).Select(dll => _process.Modules.Find(module => module.Name.Equals(dll.Key, StringComparison.OrdinalIgnoreCase)).BaseAddress).Any(dependencyAddress => !_process.CallFunction<bool>(CallingConvention.StdCall, freeLibraryAddress, (long) dependencyAddress)))
                 {
-                    throw new Win32Exception("Failed to call the entry point of the DLL in the remote process");
+                    throw new RemoteFunctionCallException("Failed to call FreeLibrary");
                 }
 
-                if (_injectionWrapper.ProcessManager.IsWow64)
+                // Free the memory allocated for the DLL
+                
+                if (_injectionMethod == InjectionMethod.ManualMap)
                 {
-                    // Get the address of the RtlRemoveInvertedFunctionTable function
-                    
-                    var rtlRemoveInvertedFunctionTableAddress = _injectionWrapper.ProcessManager.GetSymbolAddress("_RtlRemoveInvertedFunctionTable@4");
-                    
-                    // Remove the entry for the DLL from the LdrpInvertedFunctionTable
-                    
-                    _injectionWrapper.ProcessManager.CallFunction(CallingConvention.FastCall, rtlRemoveInvertedFunctionTableAddress, (ulong) injectionContext.DllBaseAddress);
+                    _process.MemoryManager.FreeVirtualMemory(remoteDllAddress);
                 }
-
+                
                 else
                 {
-                    // Calculate the address of the exception table
-                    
-                    var exceptionTableAddress = dllBaseAddress.AddOffset(_injectionWrapper.PeParser.PeHeaders.PEHeader.ExceptionTableDirectory.RelativeVirtualAddress);
-                    
-                    // Remove the exception table from the dynamic function table of the remote process
-
-                    var rtlDeleteFunctionTableAddress = _injectionWrapper.ProcessManager.GetFunctionAddress("kernel32.dll", "RtlDeleteFunctionTable");
-                    
-                    if (!_injectionWrapper.ProcessManager.CallFunction<bool>(CallingConvention.StdCall, rtlDeleteFunctionTableAddress, (ulong) exceptionTableAddress))
-                    {
-                        throw new Win32Exception("Failed to remove an exception table from the dynamic function table of the remote process");
-                    }
+                    Ntdll.NtUnmapViewOfSection(_process.Process.SafeHandle, remoteDllAddress);
                 }
-                
-                _injectionWrapper.MemoryManager.FreeVirtualMemory(dllBaseAddress);
             }
 
             else
             {
-                var freeLibraryAddress = _injectionWrapper.ProcessManager.GetFunctionAddress("kernel32.dll", "FreeLibrary");
+                var freeLibraryAddress = _process.GetFunctionAddress("kernel32.dll", "FreeLibrary");
                 
-                if (!_injectionWrapper.ProcessManager.CallFunction<bool>(CallingConvention.StdCall, freeLibraryAddress, (ulong) dllBaseAddress))
+                if (!_process.CallFunction<bool>(CallingConvention.StdCall, freeLibraryAddress, (long) remoteDllAddress))
                 {
-                    throw new Win32Exception("Failed to call FreeLibrary in the remote process");
+                    throw new RemoteFunctionCallException("Failed to call FreeLibrary");
                 }
             }
-            
-            return true;
         }
     }
 }

@@ -16,4 +16,8 @@
       <ProjectReference Include="..\Bleak\Bleak.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="Etc" />
+    </ItemGroup>
+
 </Project>

@@ -2,9 +2,9 @@ namespace Bleak.PortableExecutable.Objects
 {
     internal class TlsCallback
     {
-        internal readonly ulong Offset;
+        internal readonly int Offset;
 
-        internal TlsCallback(ulong offset)
+        internal TlsCallback(int offset)
         {
             Offset = offset;
         }

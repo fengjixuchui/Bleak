@@ -1,104 +1,118 @@
 using System;
-using System.Diagnostics;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using Bleak.Injection.Interfaces;
 using Bleak.Injection.Objects;
-using Bleak.Shared.Handlers;
-using static Bleak.Native.Enumerations;
-using static Bleak.Native.PInvoke;
-using static Bleak.Native.Structures;
+using Bleak.Native.Enumerations;
+using Bleak.Native.Structures;
+using Bleak.PortableExecutable;
+using Bleak.RemoteProcess;
+using Bleak.Shared.Exceptions;
 
 namespace Bleak.Injection.Methods
 {
     internal class CreateThread : IInjectionMethod
     {
-        private readonly InjectionWrapper _injectionWrapper;
+        private readonly string _dllPath;
 
-        public CreateThread(InjectionWrapper injectionWrapper)
+        private readonly InjectionFlags _injectionFlags;
+        
+        private readonly PeImage _peImage;
+
+        private readonly ManagedProcess _process;
+        
+        internal CreateThread(InjectionWrapper injectionWrapper)
         {
-            _injectionWrapper = injectionWrapper;
+            _dllPath = injectionWrapper.DllPath;
+
+            _injectionFlags = injectionWrapper.InjectionFlags;
+            
+            _peImage = injectionWrapper.PeImage;
+            
+            _process = injectionWrapper.Process;
+        }
+        
+        public void Dispose()
+        {
+            _peImage.Dispose();
+            
+            _process.Dispose();
         }
         
         public IntPtr Call()
         {
             // Write the DLL path into the remote process
 
-            var dllPathBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(_injectionWrapper.DllPath.Length);
-
-            var dllPathBytes = Encoding.Unicode.GetBytes(_injectionWrapper.DllPath);
-
-            _injectionWrapper.MemoryManager.WriteVirtualMemory(dllPathBuffer, dllPathBytes);
+            var dllPathAddress = _process.MemoryManager.AllocateVirtualMemory(_dllPath.Length, MemoryProtectionType.ReadWrite);
+            
+            _process.MemoryManager.WriteVirtualMemory(dllPathAddress, Encoding.Unicode.GetBytes(_dllPath));
             
             // Write a UnicodeString representing the DLL path into the remote process
 
-            IntPtr unicodeStringBuffer;
+            IntPtr dllPathUnicodeStringAddress;
 
-            if (_injectionWrapper.ProcessManager.IsWow64)
+            if (_process.IsWow64)
             {
-                var unicodeString = new UnicodeString32(_injectionWrapper.DllPath)
-                {
-                    Buffer = (uint) dllPathBuffer
-                };
+                var dllPathUnicodeString = new UnicodeString32(_dllPath, dllPathAddress);
 
-                unicodeStringBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString32>());
-
-                _injectionWrapper.MemoryManager.WriteVirtualMemory(unicodeStringBuffer, unicodeString);
+                dllPathUnicodeStringAddress = _process.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString32>(), MemoryProtectionType.ReadWrite);
+                
+                _process.MemoryManager.WriteVirtualMemory(dllPathUnicodeStringAddress, dllPathUnicodeString);
             }
 
             else
             {
-                var unicodeString = new UnicodeString64(_injectionWrapper.DllPath)
-                {
-                    Buffer = (ulong) dllPathBuffer
-                };
+                var dllPathUnicodeString = new UnicodeString64(_dllPath, dllPathAddress);
 
-                unicodeStringBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString64>());
-
-                _injectionWrapper.MemoryManager.WriteVirtualMemory(unicodeStringBuffer, unicodeString);
+                dllPathUnicodeStringAddress = _process.MemoryManager.AllocateVirtualMemory(Marshal.SizeOf<UnicodeString64>(), MemoryProtectionType.ReadWrite);
+                
+                _process.MemoryManager.WriteVirtualMemory(dllPathUnicodeStringAddress, dllPathUnicodeString);
             }
             
-            var moduleHandleBuffer = _injectionWrapper.MemoryManager.AllocateVirtualMemory(IntPtr.Size);
+            // Create a thread to call LdrLoadDll in the remote process
             
-            // Flush the instruction cache of the remote process to ensure all memory operations have been completed
-
-            if (!FlushInstructionCache(Process.GetCurrentProcess().SafeHandle, IntPtr.Zero, 0))
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to flush the instruction cache of the remote process");
-            }
+            var ldrLoadDllAddress = _process.GetFunctionAddress("ntdll.dll", "LdrLoadDll");
             
-            // Call LdrLoadDll in the remote process
+            var moduleHandleAddress = _process.MemoryManager.AllocateVirtualMemory(IntPtr.Size, MemoryProtectionType.ReadWrite);
             
-            var ldrLoadDllAddress = _injectionWrapper.ProcessManager.GetFunctionAddress("ntdll.dll", "LdrLoadDll");
-            
-            var ntStatus = _injectionWrapper.ProcessManager.CallFunction<uint>(CallingConvention.StdCall, ldrLoadDllAddress, 0, 0, (ulong) unicodeStringBuffer, (ulong) moduleHandleBuffer);
+            var ntStatus = _process.CallFunction<int>(CallingConvention.StdCall, ldrLoadDllAddress, 0, 0, (long) dllPathUnicodeStringAddress, (long) moduleHandleAddress);
 
             if ((NtStatus) ntStatus != NtStatus.Success)
             {
-                ExceptionHandler.ThrowWin32Exception("Failed to call LdrLoadDll in the remote process", (NtStatus) ntStatus);
+                throw new RemoteFunctionCallException("Failed to call LdrLoadDll", (NtStatus) ntStatus);
             }
             
-            while (_injectionWrapper.ProcessManager.Modules.All(module => module.FilePath != _injectionWrapper.DllPath))
+            // Ensure the DLL is loaded before freeing any memory
+            
+            while (_process.Modules.TrueForAll(module => module.FilePath != _dllPath))
             {
-                _injectionWrapper.ProcessManager.Refresh();
+                _process.Refresh();
             }
             
-            _injectionWrapper.MemoryManager.FreeVirtualMemory(dllPathBuffer);
+            _process.MemoryManager.FreeVirtualMemory(dllPathAddress);
 
-            _injectionWrapper.MemoryManager.FreeVirtualMemory(unicodeStringBuffer);
+            _process.MemoryManager.FreeVirtualMemory(dllPathUnicodeStringAddress);
+
+            // Read the address of the DLL that was loaded in the remote process
             
-            try
-            {
-                // Read the base address of the DLL that was loaded in the remote process
+            var remoteDllAddress = _process.MemoryManager.ReadVirtualMemory<IntPtr>(moduleHandleAddress);
 
-                return _injectionWrapper.MemoryManager.ReadVirtualMemory<IntPtr>(moduleHandleBuffer);
-            }
+            _process.MemoryManager.FreeVirtualMemory(moduleHandleAddress);
 
-            finally
+            if (!_injectionFlags.HasFlag(InjectionFlags.RandomiseDllHeaders))
             {
-                _injectionWrapper.MemoryManager.FreeVirtualMemory(moduleHandleBuffer);
+                return remoteDllAddress;
             }
+            
+            // Write over the header region of the DLL with random bytes
+                
+            var randomBuffer = new byte[_peImage.PeHeaders.PEHeader.SizeOfHeaders];
+
+            new Random().NextBytes(randomBuffer);
+
+            _process.MemoryManager.WriteVirtualMemory(remoteDllAddress, randomBuffer);
+
+            return remoteDllAddress;
         }
     }
 }

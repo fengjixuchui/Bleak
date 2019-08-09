@@ -1,8 +1,6 @@
 ## Bleak 
 
-[![Build status](https://ci.appveyor.com/api/projects/status/wp76wa0oe8robs3c?svg=true)](https://ci.appveyor.com/project/Akaion/bleak)
-
-A Windows native DLL injection library written in C# that supports several methods of injection.
+A Windows native DLL injection library that supports several methods of injection.
 
 ----
 
@@ -10,17 +8,17 @@ A Windows native DLL injection library written in C# that supports several metho
 
 * CreateThread
 * HijackThread
-* Manual
+* ManualMap
 
 ### Injection Extensions
 
 * EjectDll
 * HideDllFromPeb
 * RandomiseDllHeaders
+* RandomiseDllName
 
 ### Features
 
-* Optional randomise DLL name
 * WOW64 and x64 injection
 
 ----
@@ -44,18 +42,12 @@ The example below describes a basic implementation of the library.
 ```csharp
 using Bleak;
 
-var randomiseDllName = true;
-
-using (var injector = new Injector(InjectionMethod.CreateThread, "processName", "dllPath", randomiseDllName))
+using (var injector = new Injector("processName", "dllPath", InjectionMethod.CreateThread, InjectionFlags.None))
 {
-    // Inject the DLL into the process
-
+    // Inject the DLL into the remote process
+	
     var dllBaseAddress = injector.InjectDll();
-
-    // Hide the injected DLL from the PEB
-
-    injector.HideFromPeb();
-
+	
     // Eject the DLL from the process
 
     injector.EjectDll();
@@ -66,28 +58,28 @@ using (var injector = new Injector(InjectionMethod.CreateThread, "processName", 
 
 ### Overloads
 
-The first of these allows you to use a process ID instead of a process name.
+You can use a process ID instead of a process name.
 
 ```csharp
-var injector = new Injector(InjectionMethod, processId, "dllPath");
+var injector = new Injector(processId, "dllPath", InjectionMethod.CreateThread, InjectionFlags.None);
 ```
 
-The second of these allows you to use a byte array representing a DLL instead of a DLL path.
+You can use a byte array representing a DLL instead of a DLL path.
 
 ```csharp
-var injector = new Injector(InjectionMethod, "processName", dllBytes);
+var injector = new Injector("processName", dllBytes, InjectionMethod.CreateThread, InjectionFlags.None);
 ```
 ----
 
 ### Caveats
 
-* Injecting with a byte array will result in the provided DLL being written to disk in the temporary folder, unless the method of injection is Manual.
+* Injecting with a byte array will result in the provided DLL being written to disk in the temporary folder, unless the method of injection is ManualMap.
 
 * Injecting into a system process requires the program to be run in Administrator mode.
 
-* Manual injection only supports structured exception handling. This means that you cannot use vectored exception handling (C++ uses this) if you wish to use this method of injection.
+* ManualMap injection only supports structured exception handling. This means you cannot use vectored exception handling (C++ uses this) if you wish to use this method of injection.
 
-* x86 Manual injection relies on a PDB being present for ntdll.dll, and so, the first time this method is used with a x86 process, a PDB for ntdll.dll will be downloaded and cached in the temporary folder. Note that anytime your system updates, a new PDB version may need to be downloaded and re-cached in the temporary folder. This process make take a few seconds depending on your connection speed.
+* ManualMap injection relies on a PDB being present for ntdll.dll and so, the first time this method is used a PDB for ntdll.dll will be downloaded and cached in the temporary folder. Note that anytime your system updates, a new PDB version may need to be downloaded and re-cached in the temporary folder. This process make take a few seconds depending on your connection speed.
 
 ----
 

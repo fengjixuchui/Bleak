@@ -4,11 +4,11 @@ namespace Bleak.PortableExecutable.Objects
     {
         internal string Name;
 
-        internal readonly ulong Offset;
+        internal readonly int Offset;
 
-        internal readonly ushort Ordinal;
+        internal readonly short Ordinal;
 
-        internal ExportedFunction(string name, ulong offset, ushort ordinal)
+        internal ExportedFunction(string name, int offset, short ordinal)
         {
             Name = name;
 

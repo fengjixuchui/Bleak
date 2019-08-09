@@ -7,22 +7,22 @@ namespace Bleak.RemoteProcess.Objects
     internal class Module
     {
         internal readonly IntPtr BaseAddress;
-
+        
         internal readonly string FilePath;
 
         internal readonly string Name;
 
-        internal readonly Lazy<PeParser> PeParser;
-        
+        internal readonly Lazy<PeImage> PeImage;
+
         internal Module(IntPtr baseAddress, string filePath, string name)
         {
             BaseAddress = baseAddress;
-
+            
             FilePath = filePath;
 
             Name = name;
             
-            PeParser = new Lazy<PeParser>(() => new PeParser(File.ReadAllBytes(filePath)));
+            PeImage = new Lazy<PeImage>(() => new PeImage(File.ReadAllBytes(filePath)));
         }
     }
 }
