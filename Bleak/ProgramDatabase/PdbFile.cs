@@ -43,7 +43,7 @@ namespace Bleak.ProgramDatabase
 
             var debugData = _module.PeImage.Value.DebugData.Value;
             
-            var pdbName = $"{debugData.Path}-{debugData.Guid}-{debugData.Age}.pdb";
+            var pdbName = $"{debugData.Name}-{debugData.Guid}-{debugData.Age}.pdb";
             
             var pdbPath = Path.Combine(directoryInfo.FullName, pdbName);
             
@@ -71,7 +71,7 @@ namespace Bleak.ProgramDatabase
             
             // Download the PDB
             
-            var pdbUri = new Uri($"http://msdl.microsoft.com/download/symbols/{debugData.Path}/{debugData.Guid.ToString().Replace("-", "")}{debugData.Age}/{debugData.Path}");
+            var pdbUri = new Uri($"http://msdl.microsoft.com/download/symbols/{debugData.Name}/{debugData.Guid}{debugData.Age}/{debugData.Name}");
 
             await FileDownloader.DownloadFile(pdbUri, pdbPath);
 

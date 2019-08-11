@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection.PortableExecutable;
@@ -13,20 +14,20 @@ namespace Bleak.PortableExecutable
 {
     internal class PeImage : IDisposable
     {
-        internal readonly Lazy<List<BaseRelocation>> BaseRelocations;
+        internal readonly PEHeaders PeHeaders;
         
-        internal readonly Lazy<CodeViewDebugDirectoryData> DebugData;
+        internal readonly Lazy<List<BaseRelocation>> BaseRelocations;
 
+        internal readonly Lazy<DebugData> DebugData;
+        
         internal readonly Lazy<List<ExportedFunction>> ExportedFunctions;
 
         internal readonly Lazy<List<ImportedFunction>> ImportedFunctions;
-
-        internal readonly PEHeaders PeHeaders;
-
+        
         internal readonly Lazy<List<TlsCallback>> TlsCallbacks;
         
         private readonly IntPtr _buffer;
-
+        
         internal PeImage(byte[] peBytes)
         {
             _buffer = Marshal.AllocHGlobal(peBytes.Length);
@@ -35,8 +36,6 @@ namespace Bleak.PortableExecutable
             
             using (var peReader = new PEReader(new MemoryStream(peBytes)))
             {
-                DebugData = new Lazy<CodeViewDebugDirectoryData>(peReader.ReadCodeViewDebugDirectoryData(peReader.ReadDebugDirectory()[0]));
-                
                 PeHeaders = peReader.PEHeaders;
             }
             
@@ -51,6 +50,8 @@ namespace Bleak.PortableExecutable
             }
             
             BaseRelocations = new Lazy<List<BaseRelocation>>(ParseBaseRelocations);
+            
+            DebugData = new Lazy<DebugData>(ParseDebugData);
             
             ExportedFunctions = new Lazy<List<ExportedFunction>>(ParseExportedFunctions);
             
@@ -117,10 +118,36 @@ namespace Bleak.PortableExecutable
             return baseRelocations;
         }
 
+        private DebugData ParseDebugData()
+        {
+            // Calculate the offset of the debug table
+
+            if (PeHeaders.PEHeader.DebugTableDirectory.RelativeVirtualAddress == 0)
+            {
+                return default;
+            }
+
+            var debugTableOffset = RvaToOffset(PeHeaders.PEHeader.DebugTableDirectory.RelativeVirtualAddress);
+            
+            // Read the debug table
+
+            var debugTable = Marshal.PtrToStructure<ImageDebugDirectory>(_buffer + debugTableOffset);
+            
+            // Read the name of the PDB associated with the DLL
+
+            var debugDataOffset = RvaToOffset(debugTable.AddressOfRawData);
+            
+            var debugData = Marshal.PtrToStructure<ImageDebugData>(_buffer + debugDataOffset);
+
+            var pdbName = Marshal.PtrToStringAnsi(_buffer + debugDataOffset + Marshal.SizeOf<ImageDebugData>());
+            
+            return new DebugData(debugData.Age, debugData.Guid.ToString().Replace("-", ""), pdbName);
+        }
+        
         private List<ExportedFunction> ParseExportedFunctions()
         {
             var exportedFunctions = new List<ExportedFunction>();
-
+            
             // Read the export table
 
             if (PeHeaders.PEHeader.ExportTableDirectory.RelativeVirtualAddress == 0)
@@ -168,7 +195,7 @@ namespace Bleak.PortableExecutable
         private List<ImportedFunction> ParseImportedFunctions()
         {
             var importedFunctions = new List<ImportedFunction>();
-
+            
             void ReadImportedFunctions(string descriptorName, int descriptorThunkOffset, int importAddressTableOffset)
             {
                 for (var importedFunctionIndex = 0;; importedFunctionIndex++)
@@ -298,7 +325,7 @@ namespace Bleak.PortableExecutable
         private List<TlsCallback> ParseTlsCallbacks()
         {
             var tlsCallbacks = new List<TlsCallback>();
-
+            
             // Calculate the offset of the TLS table
 
             if (PeHeaders.PEHeader.ThreadLocalStorageTableDirectory.RelativeVirtualAddress == 0)
