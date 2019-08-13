@@ -8,18 +8,17 @@ using System.Threading.Tasks;
 using Bleak.Native;
 using Bleak.Native.Structures;
 using Bleak.Network;
-using Bleak.ProgramDatabase.Objects;
-using Bleak.RemoteProcess.Objects;
+using Bleak.RemoteProcess;
 
 namespace Bleak.ProgramDatabase
 {
     internal class PdbFile
     {
-        private readonly Module _module;
+        private readonly ManagedModule _module;
         
         private readonly List<Symbol> _symbols;
 
-        internal PdbFile(Module module, bool isWow64)
+        internal PdbFile(ManagedModule module, bool isWow64)
         {
             _module = module;
             

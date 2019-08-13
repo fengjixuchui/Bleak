@@ -1,4 +1,4 @@
-namespace Bleak.ProgramDatabase.Objects
+namespace Bleak.ProgramDatabase
 {
     internal class Symbol
     {

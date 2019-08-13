@@ -3,7 +3,6 @@ using System.Diagnostics;
 using Bleak.Injection.Extensions;
 using Bleak.Injection.Interfaces;
 using Bleak.Injection.Methods;
-using Bleak.Injection.Objects;
 using Bleak.Shared;
 
 namespace Bleak.Injection
@@ -86,7 +85,7 @@ namespace Bleak.Injection
                 return _remoteDllAddress;
             }
             
-            _remoteDllAddress = _injectionMethod.Call();
+            _remoteDllAddress = _injectionMethod.Inject();
 
             _injected = true;
 

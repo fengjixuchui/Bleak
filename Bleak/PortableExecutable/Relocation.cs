@@ -1,6 +1,6 @@
 using Bleak.Native.Enumerations;
 
-namespace Bleak.PortableExecutable.Objects
+namespace Bleak.PortableExecutable
 {
     internal class Relocation
     {

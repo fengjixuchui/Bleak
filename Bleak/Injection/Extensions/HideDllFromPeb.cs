@@ -2,7 +2,6 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using Bleak.Injection.Objects;
 using Bleak.Native.Structures;
 using Bleak.RemoteProcess;
 
@@ -25,11 +24,11 @@ namespace Bleak.Injection.Extensions
         {
             if (_process.IsWow64)
             {
-                foreach (var (key, value) in _process.Peb.GetWow64PebEntries())
+                foreach (var (entryAddress, entry) in _process.Peb.GetWow64PebEntries())
                 {
                     // Read the file path of the entry
                     
-                    var entryFilePathBytes = _process.MemoryManager.ReadVirtualMemory((IntPtr) value.FullDllName.Buffer, value.FullDllName.Length);
+                    var entryFilePathBytes = _process.MemoryManager.ReadVirtualMemory((IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
 
                     var entryFilePath = Encoding.Unicode.GetString(entryFilePathBytes);
 
@@ -40,15 +39,15 @@ namespace Bleak.Injection.Extensions
                     
                     // Remove the entry from the InLoadOrder, InMemoryOrder and InInitializationOrder linked lists
                     
-                    RemoveDoublyLinkedListEntry(value.InLoadOrderLinks);
+                    RemoveDoublyLinkedListEntry(entry.InLoadOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(value.InMemoryOrderLinks);
+                    RemoveDoublyLinkedListEntry(entry.InMemoryOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(value.InInitializationOrderLinks);
+                    RemoveDoublyLinkedListEntry(entry.InInitializationOrderLinks);
                     
                     // Remove the entry from the LdrpHashTable
                     
-                    RemoveDoublyLinkedListEntry(value.HashLinks);
+                    RemoveDoublyLinkedListEntry(entry.HashLinks);
                     
                     // Remove the entry from the LdrpModuleBaseAddressIndex
 
@@ -56,17 +55,17 @@ namespace Bleak.Injection.Extensions
 
                     var ldrpModuleBaseAddressIndex = _process.PdbFile.Value.GetSymbolAddress(new Regex("LdrpModuleBaseAddressIndex"));
 
-                    _process.CallFunction(CallingConvention.StdCall, rtlRbRemoveNodeAddress, (long) ldrpModuleBaseAddressIndex, (long) (key + (int) Marshal.OffsetOf<LdrDataTableEntry32>("BaseAddressIndexNode")));
+                    _process.CallFunction(CallingConvention.StdCall, rtlRbRemoveNodeAddress, (long) ldrpModuleBaseAddressIndex, (long) (entryAddress + (int) Marshal.OffsetOf<LdrDataTableEntry32>("BaseAddressIndexNode")));
                 }
             }
 
             else
             {
-                foreach (var (key, value) in _process.Peb.GetPebEntries())
+                foreach (var (entryAddress, entry) in _process.Peb.GetPebEntries())
                 {
                     // Read the file path of the entry
                     
-                    var entryFilePathBytes = _process.MemoryManager.ReadVirtualMemory((IntPtr) value.FullDllName.Buffer, value.FullDllName.Length);
+                    var entryFilePathBytes = _process.MemoryManager.ReadVirtualMemory((IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
 
                     var entryFilePath = Encoding.Unicode.GetString(entryFilePathBytes);
 
@@ -77,15 +76,15 @@ namespace Bleak.Injection.Extensions
                     
                     // Remove the entry from the InLoadOrder, InMemoryOrder and InInitializationOrder linked lists
                     
-                    RemoveDoublyLinkedListEntry(value.InLoadOrderLinks);
+                    RemoveDoublyLinkedListEntry(entry.InLoadOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(value.InMemoryOrderLinks);
+                    RemoveDoublyLinkedListEntry(entry.InMemoryOrderLinks);
 
-                    RemoveDoublyLinkedListEntry(value.InInitializationOrderLinks);
+                    RemoveDoublyLinkedListEntry(entry.InInitializationOrderLinks);
                     
                     // Remove the entry from the LdrpHashTable
                     
-                    RemoveDoublyLinkedListEntry(value.HashLinks);
+                    RemoveDoublyLinkedListEntry(entry.HashLinks);
                     
                     // Remove the entry from the LdrpModuleBaseAddressIndex
 
@@ -93,7 +92,7 @@ namespace Bleak.Injection.Extensions
 
                     var ldrpModuleBaseAddressIndex = _process.PdbFile.Value.GetSymbolAddress(new Regex("LdrpModuleBaseAddressIndex"));
 
-                    _process.CallFunction(CallingConvention.StdCall, rtlRbRemoveNodeAddress, (long) ldrpModuleBaseAddressIndex, (long) (key + (int) Marshal.OffsetOf<LdrDataTableEntry64>("BaseAddressIndexNode")));
+                    _process.CallFunction(CallingConvention.StdCall, rtlRbRemoveNodeAddress, (long) ldrpModuleBaseAddressIndex, (long) (entryAddress + (int) Marshal.OffsetOf<LdrDataTableEntry64>("BaseAddressIndexNode")));
                 }
             }
         }

@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
-using Bleak.Injection.Objects;
 using Bleak.Native;
 using Bleak.Native.PInvoke;
 using Bleak.PortableExecutable;

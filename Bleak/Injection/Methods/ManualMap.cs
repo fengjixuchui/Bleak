@@ -5,7 +5,6 @@ using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Bleak.Injection.Interfaces;
-using Bleak.Injection.Objects;
 using Bleak.Native;
 using Bleak.Native.Enumerations;
 using Bleak.PortableExecutable;
@@ -48,7 +47,7 @@ namespace Bleak.Injection.Methods
             _process.Dispose();
         }
 
-        public IntPtr Call()
+        public IntPtr Inject()
         {
             // Allocate memory for the DLL in the remote process
             

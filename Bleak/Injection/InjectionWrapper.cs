@@ -8,7 +8,7 @@ using Bleak.Native.Structures;
 using Bleak.PortableExecutable;
 using Bleak.RemoteProcess;
 
-namespace Bleak.Injection.Objects
+namespace Bleak.Injection
 {
     internal class InjectionWrapper
     {

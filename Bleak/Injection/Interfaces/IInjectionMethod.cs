@@ -4,6 +4,6 @@ namespace Bleak.Injection.Interfaces
 {
     internal interface IInjectionMethod : IDisposable
     {
-        IntPtr Call();
+        IntPtr Inject();
     }
 }

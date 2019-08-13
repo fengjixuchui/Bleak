@@ -1,4 +1,4 @@
-namespace Bleak.PortableExecutable.Objects
+namespace Bleak.PortableExecutable
 {
     internal class DebugData
     {

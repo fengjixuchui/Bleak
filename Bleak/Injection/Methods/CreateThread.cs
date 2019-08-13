@@ -2,7 +2,6 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using Bleak.Injection.Interfaces;
-using Bleak.Injection.Objects;
 using Bleak.Native.Enumerations;
 using Bleak.Native.Structures;
 using Bleak.PortableExecutable;
@@ -39,7 +38,7 @@ namespace Bleak.Injection.Methods
             _process.Dispose();
         }
         
-        public IntPtr Call()
+        public IntPtr Inject()
         {
             // Write the DLL path into the remote process
 

@@ -11,10 +11,10 @@ namespace Bleak.Tests
         private readonly string _dllPath;
 
         private readonly Process _process;
-
+        
         public InjectionTests()
         {
-            _dllPath = Path.Combine(Path.GetFullPath(@"..\..\..\Etc\"), "TestDll.dll");
+            _dllPath = Path.Combine(Path.GetFullPath(@"..\..\..\TestDll\"), "TestDll.dll");
             
             _process = new Process {StartInfo = {CreateNoWindow = true, FileName = "notepad.exe", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden}};
             
@@ -29,7 +29,7 @@ namespace Bleak.Tests
 
             _process.Dispose();
         }
-
+        
         [Fact]
         public void TestCreateThread()
         {

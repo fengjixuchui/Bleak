@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Bleak.Assembly.Objects
+namespace Bleak.Assembly
 {
     internal class FunctionCall
     {

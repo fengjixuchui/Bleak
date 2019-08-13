@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace Bleak.PortableExecutable.Objects
+namespace Bleak.PortableExecutable
 {
     internal class BaseRelocation
     {

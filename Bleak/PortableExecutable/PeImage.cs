@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection.PortableExecutable;
@@ -8,7 +7,6 @@ using System.Runtime.InteropServices;
 using Bleak.Native;
 using Bleak.Native.Enumerations;
 using Bleak.Native.Structures;
-using Bleak.PortableExecutable.Objects;
 
 namespace Bleak.PortableExecutable
 {

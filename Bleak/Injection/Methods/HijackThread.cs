@@ -1,9 +1,8 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using Bleak.Assembly.Objects;
+using Bleak.Assembly;
 using Bleak.Injection.Interfaces;
-using Bleak.Injection.Objects;
 using Bleak.Native;
 using Bleak.Native.Enumerations;
 using Bleak.Native.PInvoke;
@@ -42,7 +41,7 @@ namespace Bleak.Injection.Methods
             _process.Dispose();
         }
 
-        public IntPtr Call()
+        public IntPtr Inject()
         {
             // Write the DLL path into the remote process
 
@@ -108,7 +107,7 @@ namespace Bleak.Injection.Methods
                 
                 // Get the context of the thread
                 
-                var threadContext = new Context32 {ContextFlags = ContextFlags.Integer};
+                var threadContext = new Context32 {ContextFlags = ContextFlags.Control};
                 
                 var threadContextBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<Context32>());
                 

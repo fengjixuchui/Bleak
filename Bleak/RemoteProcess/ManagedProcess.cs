@@ -6,14 +6,12 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Bleak.Assembly;
-using Bleak.Assembly.Objects;
 using Bleak.Native;
 using Bleak.Native.Enumerations;
 using Bleak.Native.PInvoke;
 using Bleak.Native.Structures;
 using Bleak.ProgramDatabase;
 using Bleak.RemoteProcess.Memory;
-using Bleak.RemoteProcess.Objects;
 using Bleak.RemoteProcess.Peb;
 using Bleak.Shared.Exceptions;
 
@@ -27,7 +25,7 @@ namespace Bleak.RemoteProcess
         
         internal readonly MemoryManager MemoryManager;
 
-        internal readonly List<Module> Modules;
+        internal readonly List<ManagedModule> Modules;
 
         internal readonly Lazy<PdbFile> PdbFile;
         
@@ -213,6 +211,8 @@ namespace Bleak.RemoteProcess
                 {
                     throw new PInvokeException("Failed to call Wow64SetThreadContext");
                 }
+                
+                Marshal.FreeHGlobal(threadContextBuffer);
             }
 
             else
@@ -270,9 +270,9 @@ namespace Bleak.RemoteProcess
             }
         }
 
-        private List<Module> GetModules()
+        private List<ManagedModule> GetModules()
         {
-            var modules = new List<Module>();
+            var modules = new List<ManagedModule>();
 
             if (IsWow64)
             {
@@ -292,7 +292,7 @@ namespace Bleak.RemoteProcess
 
                     var entryName = Encoding.Unicode.GetString(entryNameBytes);
                     
-                    modules.Add(new Module((IntPtr) entry.DllBase, entryFilePath, entryName));
+                    modules.Add(new ManagedModule((IntPtr) entry.DllBase, entryFilePath, entryName));
                 }
             }
 
@@ -312,7 +312,7 @@ namespace Bleak.RemoteProcess
 
                     var entryName = Encoding.Unicode.GetString(entryNameBytes);
                     
-                    modules.Add(new Module((IntPtr) entry.DllBase, entryFilePath, entryName));
+                    modules.Add(new ManagedModule((IntPtr) entry.DllBase, entryFilePath, entryName));
                 }
             }
             

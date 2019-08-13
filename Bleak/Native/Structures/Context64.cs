@@ -3,7 +3,7 @@ using Bleak.Native.Enumerations;
 
 namespace Bleak.Native.Structures
 {
-    [StructLayout(LayoutKind.Explicit, Pack = 16, Size = 1232)]
+    [StructLayout(LayoutKind.Explicit,  Size = 1232)]
     internal struct Context64
     {
         [FieldOffset(0x30)]

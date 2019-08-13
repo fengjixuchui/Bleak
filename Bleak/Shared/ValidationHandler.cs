@@ -1,7 +1,7 @@
 using System;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
-using Bleak.Injection.Objects;
+using Bleak.Injection;
 
 namespace Bleak.Shared
 {
