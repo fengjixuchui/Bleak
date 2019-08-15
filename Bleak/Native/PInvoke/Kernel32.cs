@@ -10,7 +10,7 @@ namespace Bleak.Native.PInvoke
     {
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern bool CloseHandle(IntPtr handle);
-        
+
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern bool GetThreadContext(SafeThreadHandle threadHandle, IntPtr context);
 

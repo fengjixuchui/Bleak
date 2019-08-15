@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 using Bleak.Native;
 using Bleak.Native.PInvoke;
 using Bleak.PortableExecutable;
@@ -43,8 +42,8 @@ namespace Bleak.Injection.Extensions
                 }
                 
                 // Remove the entry for the DLL from the LdrpInvertedFunctionTable
-                
-                var rtRemoveInvertedFunctionTableAddress = _process.PdbFile.Value.GetSymbolAddress(new Regex("RtlRemoveInvertedFunctionTable"));
+
+                var rtRemoveInvertedFunctionTableAddress = _process.PdbFile.Value.Symbols["RtlRemoveInvertedFunctionTable"];
             
                 _process.CallFunction(CallingConvention.FastCall, rtRemoveInvertedFunctionTableAddress, (long) remoteDllAddress);
                 

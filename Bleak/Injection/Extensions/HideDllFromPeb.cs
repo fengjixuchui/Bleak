@@ -1,7 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.RegularExpressions;
 using Bleak.Native.Structures;
 using Bleak.RemoteProcess;
 
@@ -53,7 +52,7 @@ namespace Bleak.Injection.Extensions
 
                     var rtlRbRemoveNodeAddress = _process.GetFunctionAddress("ntdll.dll", "RtlRbRemoveNode");
 
-                    var ldrpModuleBaseAddressIndex = _process.PdbFile.Value.GetSymbolAddress(new Regex("LdrpModuleBaseAddressIndex"));
+                    var ldrpModuleBaseAddressIndex = _process.PdbFile.Value.Symbols["LdrpModuleBaseAddressIndex"];
 
                     _process.CallFunction(CallingConvention.StdCall, rtlRbRemoveNodeAddress, (long) ldrpModuleBaseAddressIndex, (long) (entryAddress + (int) Marshal.OffsetOf<LdrDataTableEntry32>("BaseAddressIndexNode")));
                 }
@@ -90,7 +89,7 @@ namespace Bleak.Injection.Extensions
 
                     var rtlRbRemoveNodeAddress = _process.GetFunctionAddress("ntdll.dll", "RtlRbRemoveNode");
 
-                    var ldrpModuleBaseAddressIndex = _process.PdbFile.Value.GetSymbolAddress(new Regex("LdrpModuleBaseAddressIndex"));
+                    var ldrpModuleBaseAddressIndex = _process.PdbFile.Value.Symbols["LdrpModuleBaseAddressIndex"];
 
                     _process.CallFunction(CallingConvention.StdCall, rtlRbRemoveNodeAddress, (long) ldrpModuleBaseAddressIndex, (long) (entryAddress + (int) Marshal.OffsetOf<LdrDataTableEntry64>("BaseAddressIndexNode")));
                 }

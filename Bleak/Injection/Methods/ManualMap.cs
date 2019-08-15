@@ -3,7 +3,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 using Bleak.Injection.Interfaces;
 using Bleak.Native;
 using Bleak.Native.Enumerations;
@@ -202,7 +201,7 @@ namespace Bleak.Injection.Methods
         {
             // Add an entry for the DLL to the LdrpInvertedFunctionTable
             
-            var rtlInsertInvertedFunctionTableAddress = _process.PdbFile.Value.GetSymbolAddress(new Regex("RtlInsertInvertedFunctionTable"));
+            var rtlInsertInvertedFunctionTableAddress = _process.PdbFile.Value.Symbols["RtlInsertInvertedFunctionTable"];
             
             _process.CallFunction(CallingConvention.FastCall, rtlInsertInvertedFunctionTableAddress, (long) _remoteDllAddress, _peImage.PeHeaders.PEHeader.SizeOfImage);
         }
