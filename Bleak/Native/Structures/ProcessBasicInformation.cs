@@ -15,7 +15,7 @@ namespace Bleak.Native.Structures
         private readonly IntPtr BasePriority;
 
         private readonly IntPtr UniqueProcessId;
-        
+
         private readonly IntPtr InheritedFromUniqueProcessId;
     }
 }

@@ -7,8 +7,8 @@ namespace Bleak.Native.Structures
     {
         [FieldOffset(0x0C)]
         internal readonly int Ldr;
-        
-        [FieldOffset(0x38)] 
+
+        [FieldOffset(0x38)]
         internal readonly int ApiSetMap;
     }
 }

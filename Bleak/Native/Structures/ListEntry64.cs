@@ -6,7 +6,7 @@ namespace Bleak.Native.Structures
     internal struct ListEntry64
     {
         internal long Flink;
-        
+
         internal long Blink;
     }
 }

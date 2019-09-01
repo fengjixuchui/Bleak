@@ -1,6 +1,6 @@
 using System;
+using Bleak.Exceptions;
 using Bleak.Native.PInvoke;
-using Bleak.Shared.Exceptions;
 using Microsoft.Win32.SafeHandles;
 
 namespace Bleak.Native.SafeHandle

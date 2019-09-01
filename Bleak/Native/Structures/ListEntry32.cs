@@ -6,7 +6,7 @@ namespace Bleak.Native.Structures
     internal struct ListEntry32
     {
         internal int Flink;
-        
+
         internal int Blink;
     }
 }

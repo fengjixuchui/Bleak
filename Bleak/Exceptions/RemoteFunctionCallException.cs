@@ -2,7 +2,7 @@ using System;
 using Bleak.Native.Enumerations;
 using Bleak.Native.PInvoke;
 
-namespace Bleak.Shared.Exceptions
+namespace Bleak.Exceptions
 {
     internal class RemoteFunctionCallException : Exception
     {

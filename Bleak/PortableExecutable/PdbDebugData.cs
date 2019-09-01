@@ -1,14 +1,14 @@
 namespace Bleak.PortableExecutable
 {
-    internal class DebugData
+    internal class PdbDebugData
     {
         internal readonly int Age;
-        
+
         internal readonly string Guid;
 
         internal readonly string Name;
 
-        internal DebugData(int age, string guid, string name)
+        internal PdbDebugData(int age, string guid, string name)
         {
             Age = age;
 

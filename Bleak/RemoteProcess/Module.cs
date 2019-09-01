@@ -4,24 +4,24 @@ using Bleak.PortableExecutable;
 
 namespace Bleak.RemoteProcess
 {
-    internal class ManagedModule
+    internal class Module
     {
         internal readonly IntPtr BaseAddress;
-        
+
         internal readonly string FilePath;
 
         internal readonly string Name;
 
         internal readonly Lazy<PeImage> PeImage;
 
-        internal ManagedModule(IntPtr baseAddress, string filePath, string name)
+        internal Module(IntPtr baseAddress, string filePath, string name)
         {
             BaseAddress = baseAddress;
-            
+
             FilePath = filePath;
 
             Name = name;
-            
+
             PeImage = new Lazy<PeImage>(() => new PeImage(File.ReadAllBytes(filePath)));
         }
     }
