@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Bleak.Exceptions;
 using Bleak.Native;
@@ -22,7 +23,27 @@ namespace Bleak.ProgramDatabase
 
         internal PdbFile(Module module, bool isWow64)
         {
+            // Initialise a global mutex to ensure the PDB is only downloaded by a single instance at a time
+
+            Mutex fileMutex;
+
+            try
+            {
+                fileMutex = Mutex.OpenExisting("BleakFileMutex");
+
+                fileMutex.WaitOne();
+            }
+
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                fileMutex = new Mutex(true, "BleakFileMutex");
+            }
+
             Symbols = ParseSymbols(DownloadPdb(new PeImage(File.ReadAllBytes(module.FilePath)).PdbDebugData, isWow64).Result, module.BaseAddress);
+
+            fileMutex.ReleaseMutex();
+
+            fileMutex.Dispose();
         }
 
         private async Task<string> DownloadPdb(PdbDebugData pdbDebugData, bool isWow64)

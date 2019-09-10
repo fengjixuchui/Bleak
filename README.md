@@ -10,7 +10,7 @@ A Windows native DLL injection library that supports several methods of injectio
 * HijackThread
 * ManualMap
 
-### Injection Extensions
+### Optional Extensions
 
 * EjectDll
 * HideDllFromPeb
@@ -58,13 +58,13 @@ using (var injector = new Injector("processName", "dllPath", InjectionMethod.Cre
 
 ### Overloads
 
-You can use a process ID instead of a process name.
+A process ID can be used instead of a process name.
 
 ```csharp
 var injector = new Injector(processId, "dllPath", InjectionMethod.CreateThread, InjectionFlags.None);
 ```
 
-You can use a byte array representing a DLL instead of a DLL path.
+A byte array representing a DLL can be used instead of a DLL path.
 
 ```csharp
 var injector = new Injector("processName", dllBytes, InjectionMethod.CreateThread, InjectionFlags.None);

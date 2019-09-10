@@ -2,7 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using Bleak.Tests.Memory;
+using Jupiter;
 using Xunit;
 
 namespace Bleak.Tests
@@ -45,34 +45,6 @@ namespace Bleak.Tests
         }
 
         [Fact]
-        public void TestEjectDll()
-        {
-            using (var injector = new Injector(_process.Id, _dllPath, InjectionMethod.CreateThread))
-            {
-                injector.InjectDll();
-
-                injector.EjectDll();
-            }
-
-            _process.Refresh();
-
-            Assert.DoesNotContain(_process.Modules.Cast<ProcessModule>(), module => module.FileName == _dllPath);
-        }
-
-        [Fact]
-        public void TestHideDllFromPeb()
-        {
-            using (var injector = new Injector(_process.Id, _dllPath, InjectionMethod.CreateThread, InjectionFlags.HideDllFromPeb))
-            {
-                injector.InjectDll();
-            }
-
-            _process.Refresh();
-
-            Assert.DoesNotContain(_process.Modules.Cast<ProcessModule>(), module => module.FileName == _dllPath);
-        }
-
-        [Fact]
         public void TestHijackThread()
         {
             using (var injector = new Injector(_process.Id, _dllPath, InjectionMethod.HijackThread))
@@ -90,31 +62,12 @@ namespace Bleak.Tests
         {
             using (var injector = new Injector(_process.Id, _dllPath, InjectionMethod.ManualMap))
             {
-                Assert.True(injector.InjectDll() != IntPtr.Zero);
-            }
-        }
+                using (var memoryModule = new MemoryModule(_process.Id))
+                {
+                    var firstTwoBytes = memoryModule.ReadVirtualMemory(injector.InjectDll(), 2);
 
-        [Fact]
-        public void TestRandomiseDllName()
-        {
-            using (var injector = new Injector(_process.Id, _dllPath, InjectionMethod.CreateThread, InjectionFlags.RandomiseDllName))
-            {
-                injector.InjectDll();
-            }
-
-            _process.Refresh();
-
-            Assert.DoesNotContain(_process.Modules.Cast<ProcessModule>(), module => module.FileName == _dllPath);
-        }
-
-        [Fact]
-        public void TestRandomiseDllHeaders()
-        {
-            using (var injector = new Injector(_process.Id, _dllPath, InjectionMethod.CreateThread, InjectionFlags.RandomiseDllHeaders))
-            {
-                var firstTwoBytes = MemoryManager.ReadVirtualMemory(_process.SafeHandle, injector.InjectDll(), 2);
-
-                Assert.NotEqual(firstTwoBytes, new byte[] {0x4D, 0x5A});
+                    Assert.Equal(firstTwoBytes, new byte[] {0x4D, 0x5A});
+                }
             }
         }
     }
