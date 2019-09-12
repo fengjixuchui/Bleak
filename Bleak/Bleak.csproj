@@ -7,6 +7,7 @@
         <Description>A Windows native DLL injection library that supports several methods of injection.</Description>
         <RepositoryUrl>https://github.com/Akaion/Bleak</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
+        <LangVersion>latest</LangVersion>
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
