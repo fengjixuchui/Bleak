@@ -1,5 +1,7 @@
 ## Bleak 
 
+![](https://github.com/Akaion/Bleak/workflows/Continuous%20Integration/badge.svg)
+
 A Windows native DLL injection library that supports several methods of injection.
 
 ----
