@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace Bleak.Native.Structures
 {
     [StructLayout(LayoutKind.Explicit)]
-    internal struct ImageDebugData
+    internal readonly struct ImageDebugData
     {
         [FieldOffset(0x04)]
         internal readonly Guid Guid;

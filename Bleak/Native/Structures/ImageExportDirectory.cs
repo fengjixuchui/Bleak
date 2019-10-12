@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace Bleak.Native.Structures
 {
     [StructLayout(LayoutKind.Explicit)]
-    internal struct ImageExportDirectory
+    internal readonly struct ImageExportDirectory
     {
         [FieldOffset(0x10)]
         internal readonly int Base;

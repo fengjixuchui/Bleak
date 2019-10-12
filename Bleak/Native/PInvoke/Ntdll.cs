@@ -8,13 +8,13 @@ namespace Bleak.Native.PInvoke
 {
     internal static class Ntdll
     {
-        [DllImport("ntdll.dll", SetLastError = true)]
-        internal static extern NtStatus NtCreateThreadEx(out SafeThreadHandle threadHandle, int desiredAccess, IntPtr objectAttributes, SafeProcessHandle processHandle, IntPtr startAddress, IntPtr parameter, ThreadCreationFlags creationFlags, int zeroBits, int stackSize, int maximumStackSize, IntPtr attributeList);
+        [DllImport("ntdll.dll")]
+        internal static extern NtStatus NtCreateThreadEx(out SafeThreadHandle threadHandle, AccessMask desiredAccess, IntPtr objectAttributes, SafeProcessHandle processHandle, IntPtr startAddress, IntPtr parameter, ThreadCreationFlags creationFlags, int zeroBits, int stackSize, int maximumStackSize, IntPtr attributeList);
 
-        [DllImport("ntdll.dll", SetLastError = true)]
-        internal static extern NtStatus NtQueryInformationProcess(SafeProcessHandle processHandle, ProcessInformationClass processInformationClass, IntPtr processInformation, int bufferSize, IntPtr returnLength);
+        [DllImport("ntdll.dll")]
+        internal static extern NtStatus NtQueryInformationProcess(SafeProcessHandle processHandle, ProcessInformationClass processInformationClass, ref byte buffer, int bufferSize, out int returnLength);
 
-        [DllImport("ntdll.dll", SetLastError = true)]
+        [DllImport("ntdll.dll")]
         internal static extern int RtlNtStatusToDosError(NtStatus ntStatus);
     }
 }

@@ -5,19 +5,20 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Bleak.Exceptions;
 using Bleak.Native;
 using Bleak.Native.PInvoke;
 using Bleak.Native.Structures;
-using Bleak.PortableExecutable;
-using Bleak.RemoteProcess;
+using Bleak.PortableExecutable.Structures;
+using Bleak.RemoteProcess.Structures;
 
 namespace Bleak.ProgramDatabase
 {
-    internal class PdbFile
+    internal sealed class PdbFile
     {
         internal readonly Dictionary<string, IntPtr> Symbols;
 
@@ -25,34 +26,26 @@ namespace Bleak.ProgramDatabase
         {
             // Initialise a global mutex to ensure the PDB is only downloaded by a single instance at a time
 
-            Mutex fileMutex;
-
-            try
+            if (!Mutex.TryOpenExisting("BleakPdbMutex", out var pdbMutex))
             {
-                fileMutex = Mutex.OpenExisting("BleakFileMutex");
-
-                fileMutex.WaitOne();
+                pdbMutex = new Mutex(true, "BleakPdbMutex");
             }
 
-            catch (WaitHandleCannotBeOpenedException)
+            using (pdbMutex)
             {
-                fileMutex = new Mutex(true, "BleakFileMutex");
+                Symbols = ParseSymbols(DownloadPdb(module.PeImage.Value.DebugData, isWow64).Result, module.BaseAddress);
+
+                pdbMutex.ReleaseMutex();
             }
-
-            Symbols = ParseSymbols(DownloadPdb(new PeImage(File.ReadAllBytes(module.FilePath)).PdbDebugData, isWow64).Result, module.BaseAddress);
-
-            fileMutex.ReleaseMutex();
-
-            fileMutex.Dispose();
         }
 
-        private async Task<string> DownloadPdb(PdbDebugData pdbDebugData, bool isWow64)
+        private static async Task<string> DownloadPdb(DebugData debugData, bool isWow64)
         {
             // Ensure a directory exists on disk for the PDB
 
             var directoryInfo = Directory.CreateDirectory(isWow64 ? Path.Combine(Path.GetTempPath(), "Bleak", "PDB", "WOW64") : Path.Combine(Path.GetTempPath(), "Bleak", "PDB", "x64"));
 
-            var pdbName = $"{pdbDebugData.Name}-{pdbDebugData.Guid}-{pdbDebugData.Age}.pdb";
+            var pdbName = $"{debugData.Name}-{debugData.Guid}-{debugData.Age}.pdb";
 
             var pdbPath = Path.Combine(directoryInfo.FullName, pdbName);
 
@@ -80,7 +73,7 @@ namespace Bleak.ProgramDatabase
 
             // Download the PDB
 
-            var pdbUri = new Uri($"http://msdl.microsoft.com/download/symbols/{pdbDebugData.Name}/{pdbDebugData.Guid}{pdbDebugData.Age}/{pdbDebugData.Name}");
+            var pdbUri = new Uri($"http://msdl.microsoft.com/download/symbols/{debugData.Name}/{debugData.Guid}{debugData.Age}/{debugData.Name}");
 
             void ReportDownloadProgress(object sender, ProgressChangedEventArgs eventArgs)
             {
@@ -89,61 +82,65 @@ namespace Bleak.ProgramDatabase
                 Console.Write($"\rDownloading required files - [{new string('=', progress)}{new string(' ', 50 - progress)}] - {eventArgs.ProgressPercentage}%");
             }
 
-            using (var webClient = new WebClient())
-            {
-                webClient.DownloadProgressChanged += ReportDownloadProgress;
+            using var webClient = new WebClient();
 
-                await webClient.DownloadFileTaskAsync(pdbUri, pdbPath);
-            }
+            webClient.DownloadProgressChanged += ReportDownloadProgress;
+
+            await webClient.DownloadFileTaskAsync(pdbUri, pdbPath);
 
             return pdbPath;
         }
 
-        private Dictionary<string, IntPtr> ParseSymbols(string pdbPath, IntPtr moduleAddress)
+        private static Dictionary<string, IntPtr> ParseSymbols(string pdbPath, IntPtr moduleAddress)
         {
+            var symbols = new Dictionary<string, IntPtr>();
+
             // Initialise a symbol handler for the local process
 
-            var localProcessHandle = Process.GetCurrentProcess().SafeHandle;
+            using var localProcess = Process.GetCurrentProcess();
 
-            if (!Dbghelp.SymInitialize(localProcessHandle, IntPtr.Zero, false))
+            if (!Dbghelp.SymInitialize(localProcess.SafeHandle, IntPtr.Zero, false))
             {
-                throw new PInvokeException("Failed to call SymInitialize");
+                throw new Win32Exception($"Failed to call SymInitialize with error code {Marshal.GetLastWin32Error()}");
             }
 
             // Load the symbol table for the PDB
 
-            var pdbPathBuffer = Marshal.StringToHGlobalAnsi(pdbPath);
+            var pdbPathBuffer = Encoding.Default.GetBytes(pdbPath);
 
-            var symbolTableBaseAddress = Dbghelp.SymLoadModuleEx(localProcessHandle, IntPtr.Zero, pdbPathBuffer, IntPtr.Zero, moduleAddress, int.MaxValue, IntPtr.Zero, 0);
+            var symbolTableBaseAddress = Dbghelp.SymLoadModuleEx(localProcess.SafeHandle, IntPtr.Zero, ref pdbPathBuffer[0], IntPtr.Zero, moduleAddress, (int) new FileInfo(pdbPath).Length, IntPtr.Zero, 0);
 
             if (symbolTableBaseAddress == IntPtr.Zero)
             {
-                throw new PInvokeException("Failed to call SymLoadModuleEx");
+                throw new Win32Exception($"Failed to call SymLoadModuleEx with error code {Marshal.GetLastWin32Error()}");
             }
 
             // Initialise the callback used during the SymEnumSymbols call
 
-            var symbols = new Dictionary<string, IntPtr>();
-
-            bool Callback(IntPtr symbolInfo, int symbolSize, IntPtr userContext)
+            bool Callback(ref SymbolInfo symbolInfo, int symbolSize, IntPtr userContext)
             {
-                symbols.TryAdd(Marshal.PtrToStringAnsi(symbolInfo + Marshal.SizeOf<SymbolInfo>()), (IntPtr) Marshal.PtrToStructure<SymbolInfo>(symbolInfo).Address);
+                var symbolNameBuffer = new byte[symbolInfo.NameLen];
+
+                Unsafe.CopyBlockUnaligned(ref symbolNameBuffer[0], ref symbolInfo.Name, (uint) symbolNameBuffer.Length);
+
+                symbols.TryAdd(Encoding.Default.GetString(symbolNameBuffer), (IntPtr) symbolInfo.Address);
 
                 return true;
             }
 
             var callbackDelegate = new Prototypes.EnumerateSymbolsCallback(Callback);
 
-            var callbackPointer = Marshal.GetFunctionPointerForDelegate(callbackDelegate);
-
             // Enumerate the PDB symbols
 
-            if (!Dbghelp.SymEnumSymbols(localProcessHandle, symbolTableBaseAddress, IntPtr.Zero, callbackPointer, IntPtr.Zero))
+            if (!Dbghelp.SymEnumSymbols(localProcess.SafeHandle, symbolTableBaseAddress, IntPtr.Zero, callbackDelegate, IntPtr.Zero))
             {
-                throw new PInvokeException("Failed to call SymEnumSymbols");
+                throw new Win32Exception($"Failed to call SymEnumSymbols with error code {Marshal.GetLastWin32Error()}");
             }
 
-            Dbghelp.SymUnloadModule64(localProcessHandle, symbolTableBaseAddress);
+            if (!Dbghelp.SymUnloadModule(localProcess.SafeHandle, symbolTableBaseAddress))
+            {
+                throw new Win32Exception($"Failed to call SymUnloadModule with error code {Marshal.GetLastWin32Error()}");
+            }
 
             return symbols;
         }

@@ -3,65 +3,60 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection.PortableExecutable;
-using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
+using System.Text;
 using Bleak.Native;
 using Bleak.Native.Enumerations;
 using Bleak.Native.Structures;
+using Bleak.PortableExecutable.Structures;
 
 namespace Bleak.PortableExecutable
 {
-    internal class PeImage
+    internal sealed class PeImage
     {
-        internal readonly PEHeaders PeHeaders;
-
         internal readonly List<BaseRelocation> BaseRelocations;
+
+        internal readonly DebugData DebugData;
 
         internal readonly List<ExportedFunction> ExportedFunctions;
 
-        internal readonly List<ImportedFunction> ImportedFunctions;
+        internal readonly PEHeaders Headers;
 
-        internal readonly PdbDebugData PdbDebugData;
+        internal readonly List<ImportedFunction> ImportedFunctions;
 
         internal readonly List<TlsCallback> TlsCallbacks;
 
+        private readonly byte[] _peBytes;
+
         internal PeImage(byte[] peBytes)
         {
-            using (var peReader = new PEReader(new MemoryStream(peBytes)))
-            {
-                PeHeaders = peReader.PEHeaders;
-            }
+            _peBytes = peBytes;
 
-            ValidatePe();
+            Headers = ParseHeaders();
 
-            var peBuffer = Marshal.AllocHGlobal(peBytes.Length);
+            BaseRelocations = ParseBaseRelocations();
 
-            Marshal.Copy(peBytes, 0, peBuffer, peBytes.Length);
+            DebugData = ParseDebugData();
 
-            BaseRelocations = ParseBaseRelocations(peBuffer);
+            ExportedFunctions = ParseExportedFunctions();
 
-            ExportedFunctions = ParseExportedFunctions(peBuffer);
+            ImportedFunctions = ParseImportedFunctions();
 
-            ImportedFunctions = ParseImportedFunctions(peBuffer);
-
-            PdbDebugData = ParsePdbData(peBuffer);
-
-            TlsCallbacks = ParseTlsCallbacks(peBuffer);
-
-            Marshal.FreeHGlobal(peBuffer);
+            TlsCallbacks = ParseTlsCallbacks();
         }
 
-        private List<BaseRelocation> ParseBaseRelocations(IntPtr peBuffer)
+        private List<BaseRelocation> ParseBaseRelocations()
         {
             var baseRelocations = new List<BaseRelocation>();
 
             // Calculate the offset of the base relocation table
 
-            if (PeHeaders.PEHeader.BaseRelocationTableDirectory.RelativeVirtualAddress == 0)
+            if (Headers.PEHeader.BaseRelocationTableDirectory.RelativeVirtualAddress == 0)
             {
                 return baseRelocations;
             }
 
-            var baseRelocationTableOffset = RvaToVa(PeHeaders.PEHeader.BaseRelocationTableDirectory.RelativeVirtualAddress);
+            var baseRelocationTableOffset = RvaToVa(Headers.PEHeader.BaseRelocationTableDirectory.RelativeVirtualAddress);
 
             // Read the base relocation blocks from the base relocation table
 
@@ -69,7 +64,7 @@ namespace Bleak.PortableExecutable
 
             while (true)
             {
-                var baseRelocationBlock = Marshal.PtrToStructure<ImageBaseRelocation>(peBuffer + currentBaseRelocationBlockOffset);
+                var baseRelocationBlock = Unsafe.ReadUnaligned<ImageBaseRelocation>(ref _peBytes[currentBaseRelocationBlockOffset]);
 
                 if (baseRelocationBlock.SizeOfBlock == 0)
                 {
@@ -78,15 +73,19 @@ namespace Bleak.PortableExecutable
 
                 // Read the relocations from the base relocation block
 
-                var relocationAmount = (baseRelocationBlock.SizeOfBlock - Marshal.SizeOf<ImageBaseRelocation>()) / sizeof(short);
+                var relocationAmount = (baseRelocationBlock.SizeOfBlock - Unsafe.SizeOf<ImageBaseRelocation>()) / sizeof(short);
 
                 var relocations = new List<Relocation>();
 
                 for (var relocationIndex = 0; relocationIndex < relocationAmount; relocationIndex ++)
                 {
-                    var relocation = Marshal.PtrToStructure<ushort>(peBuffer + currentBaseRelocationBlockOffset + Marshal.SizeOf<ImageBaseRelocation>() + sizeof(short) * relocationIndex);
+                    var relocation = Unsafe.ReadUnaligned<ushort>(ref _peBytes[currentBaseRelocationBlockOffset + Unsafe.SizeOf<ImageBaseRelocation>() + sizeof(short) * relocationIndex]);
+
+                    // The relocation offset is located in the upper 4 bits of the relocation
 
                     var relocationOffset = relocation & 0xFFF;
+
+                    // The relocation type is located in the lower 12 bits of the relocation
 
                     var relocationType = relocation >> 12;
 
@@ -103,47 +102,87 @@ namespace Bleak.PortableExecutable
             return baseRelocations;
         }
 
-        private List<ExportedFunction> ParseExportedFunctions(IntPtr peBuffer)
+        private DebugData ParseDebugData()
+        {
+            // Calculate the offset of the debug table
+
+            if (Headers.PEHeader.DebugTableDirectory.RelativeVirtualAddress == 0)
+            {
+                return default;
+            }
+
+            var debugTableOffset = RvaToVa(Headers.PEHeader.DebugTableDirectory.RelativeVirtualAddress);
+
+            // Read the debug table
+
+            var debugTable = Unsafe.ReadUnaligned<ImageDebugDirectory>(ref _peBytes[debugTableOffset]);
+
+            // Read the name of the PDB associated with the DLL
+
+            var debugDataOffset = RvaToVa(debugTable.AddressOfRawData);
+
+            var debugData = Unsafe.ReadUnaligned<ImageDebugData>(ref _peBytes[debugDataOffset]);
+
+            var pdbNameLength = 0;
+
+            while (_peBytes[debugDataOffset + Unsafe.SizeOf<ImageDebugData>() + pdbNameLength] != 0x00)
+            {
+                pdbNameLength += 1;
+            }
+
+            var pdbName = Encoding.ASCII.GetString(new ReadOnlySpan<byte>(_peBytes).Slice(debugDataOffset + Unsafe.SizeOf<ImageDebugData>(), pdbNameLength));
+
+            return new DebugData(debugData.Age, debugData.Guid.ToString().Replace("-", ""), pdbName);
+        }
+
+        private List<ExportedFunction> ParseExportedFunctions()
         {
             var exportedFunctions = new List<ExportedFunction>();
 
             // Read the export table
 
-            if (PeHeaders.PEHeader.ExportTableDirectory.RelativeVirtualAddress == 0)
+            if (Headers.PEHeader.ExportTableDirectory.RelativeVirtualAddress == 0)
             {
                 return exportedFunctions;
             }
 
-            var exportTable = Marshal.PtrToStructure<ImageExportDirectory>(peBuffer + RvaToVa(PeHeaders.PEHeader.ExportTableDirectory.RelativeVirtualAddress));
+            var exportTable = Unsafe.ReadUnaligned<ImageExportDirectory>(ref _peBytes[RvaToVa(Headers.PEHeader.ExportTableDirectory.RelativeVirtualAddress)]);
 
             // Read the exported functions from the export table
 
-            var exportedFunctionOffsets = new int[exportTable.NumberOfFunctions];
-
-            Marshal.Copy(peBuffer + RvaToVa(exportTable.AddressOfFunctions), exportedFunctionOffsets, 0, exportTable.NumberOfFunctions);
+            var exportedFunctionOffsetsOffset = RvaToVa(exportTable.AddressOfFunctions);
 
             for (var exportedFunctionIndex = 0; exportedFunctionIndex < exportTable.NumberOfFunctions; exportedFunctionIndex ++)
             {
-                exportedFunctions.Add(new ExportedFunction(null, exportedFunctionOffsets[exportedFunctionIndex], (short) (exportTable.Base + exportedFunctionIndex)));
+                var exportedFunctionOffset = Unsafe.ReadUnaligned<int>(ref _peBytes[exportedFunctionOffsetsOffset + sizeof(int) * exportedFunctionIndex]);
+
+                exportedFunctions.Add(new ExportedFunction(null, exportedFunctionOffset, (short) (exportTable.Base + exportedFunctionIndex)));
             }
 
             // Associate names with the exported functions
 
-            var exportedFunctionNameRvas = new int[exportTable.NumberOfNames];
+            var exportedFunctionNamesOffset = RvaToVa(exportTable.AddressOfNames);
 
-            Marshal.Copy(peBuffer + RvaToVa(exportTable.AddressOfNames), exportedFunctionNameRvas, 0, exportTable.NumberOfNames);
-
-            var exportedFunctionOrdinals = new short[exportTable.NumberOfNames];
-
-            Marshal.Copy(peBuffer + RvaToVa(exportTable.AddressOfNameOrdinals), exportedFunctionOrdinals, 0, exportTable.NumberOfNames);
+            var exportedFunctionOrdinalsOffset = RvaToVa(exportTable.AddressOfNameOrdinals);
 
             for (var exportedFunctionIndex = 0; exportedFunctionIndex < exportTable.NumberOfNames; exportedFunctionIndex ++)
             {
                 // Read the name of the exported function
 
-                var exportedFunctionName = Marshal.PtrToStringAnsi(peBuffer + RvaToVa(exportedFunctionNameRvas[exportedFunctionIndex]));
+                var exportedFunctionNameOffset = RvaToVa(Unsafe.ReadUnaligned<int>(ref _peBytes[exportedFunctionNamesOffset + sizeof(int) * exportedFunctionIndex]));
 
-                var exportedFunctionOrdinal = exportTable.Base + exportedFunctionOrdinals[exportedFunctionIndex];
+                var exportedFunctionNameLength = 0;
+
+                while (_peBytes[exportedFunctionNameOffset + exportedFunctionNameLength] != 0x00)
+                {
+                    exportedFunctionNameLength += 1;
+                }
+
+                var exportedFunctionName = Encoding.ASCII.GetString(new ReadOnlySpan<byte>(_peBytes).Slice(exportedFunctionNameOffset, exportedFunctionNameLength));
+
+                // Read the ordinal of the exported function
+
+                var exportedFunctionOrdinal = exportTable.Base + Unsafe.ReadUnaligned<short>(ref _peBytes[exportedFunctionOrdinalsOffset + sizeof(short) * exportedFunctionIndex]);
 
                 exportedFunctions.Find(exportedFunction => exportedFunction.Ordinal == exportedFunctionOrdinal).Name = exportedFunctionName;
             }
@@ -151,21 +190,38 @@ namespace Bleak.PortableExecutable
             return exportedFunctions;
         }
 
-        private List<ImportedFunction> ParseImportedFunctions(IntPtr peBuffer)
+        private PEHeaders ParseHeaders()
+        {
+            using var peReader = new PEReader(new MemoryStream(_peBytes));
+
+            if (!peReader.PEHeaders.IsDll)
+            {
+                throw new BadImageFormatException("The provided file was not a valid DLL");
+            }
+
+            if (peReader.PEHeaders.CorHeader != null)
+            {
+                throw new BadImageFormatException(".Net DLL's are not supported");
+            }
+
+            return peReader.PEHeaders;
+        }
+
+        private List<ImportedFunction> ParseImportedFunctions()
         {
             var importedFunctions = new List<ImportedFunction>();
 
             void ReadImportedFunctions(string descriptorName, int descriptorThunkOffset, int importAddressTableOffset)
             {
-                for (var importedFunctionIndex = 0;; importedFunctionIndex++)
+                for (var importedFunctionIndex = 0;; importedFunctionIndex ++)
                 {
                     // Read the thunk of the imported function
 
-                    var importedFunctionThunkOffset = PeHeaders.PEHeader.Magic == PEMagic.PE32
+                    var importedFunctionThunkOffset = Headers.PEHeader.Magic == PEMagic.PE32
                                                     ? descriptorThunkOffset + sizeof(int) * importedFunctionIndex
                                                     : descriptorThunkOffset + sizeof(long) * importedFunctionIndex;
 
-                    var importedFunctionThunk = Marshal.ReadInt32(peBuffer + importedFunctionThunkOffset);
+                    var importedFunctionThunk = Unsafe.ReadUnaligned<int>(ref _peBytes[importedFunctionThunkOffset]);
 
                     if (importedFunctionThunk == 0)
                     {
@@ -174,11 +230,11 @@ namespace Bleak.PortableExecutable
 
                     // Determine if the function is imported by its ordinal
 
-                    var importAddressTableFunctionOffset = PeHeaders.PEHeader.Magic == PEMagic.PE32
+                    var importAddressTableFunctionOffset = Headers.PEHeader.Magic == PEMagic.PE32
                                                          ? importAddressTableOffset + sizeof(int) * importedFunctionIndex
                                                          : importAddressTableOffset + sizeof(long) * importedFunctionIndex;
 
-                    switch (PeHeaders.PEHeader.Magic)
+                    switch (Headers.PEHeader.Magic)
                     {
                         case PEMagic.PE32 when (importedFunctionThunk & Constants.OrdinalFlag32) == Constants.OrdinalFlag32:
                         {
@@ -200,11 +256,18 @@ namespace Bleak.PortableExecutable
 
                             var importedFunctionOrdinalOffset = RvaToVa(importedFunctionThunk);
 
-                            var importedFunctionOrdinal = Marshal.ReadInt16(peBuffer + importedFunctionOrdinalOffset);
+                            var importedFunctionOrdinal = Unsafe.ReadUnaligned<short>(ref _peBytes[importedFunctionOrdinalOffset]);
 
                             // Read the name of the imported function
 
-                            var importedFunctionName = Marshal.PtrToStringAnsi(peBuffer + importedFunctionOrdinalOffset + sizeof(short));
+                            var importedFunctionNameLength = 0;
+
+                            while (_peBytes[importedFunctionOrdinalOffset + sizeof(short) + importedFunctionNameLength] != 0x00)
+                            {
+                                importedFunctionNameLength += 1;
+                            }
+
+                            var importedFunctionName = Encoding.ASCII.GetString(new ReadOnlySpan<byte>(_peBytes).Slice(importedFunctionOrdinalOffset + sizeof(short), importedFunctionNameLength));
 
                             importedFunctions.Add(new ImportedFunction(descriptorName, importedFunctionName, importAddressTableFunctionOffset, importedFunctionOrdinal));
 
@@ -216,25 +279,34 @@ namespace Bleak.PortableExecutable
 
             // Calculate the offset of the import table
 
-            if (PeHeaders.PEHeader.ImportTableDirectory.RelativeVirtualAddress == 0)
+            if (Headers.PEHeader.ImportTableDirectory.RelativeVirtualAddress == 0)
             {
                 return importedFunctions;
             }
 
-            var importTableOffset = RvaToVa(PeHeaders.PEHeader.ImportTableDirectory.RelativeVirtualAddress);
+            var importTableOffset = RvaToVa(Headers.PEHeader.ImportTableDirectory.RelativeVirtualAddress);
 
             for (var importDescriptorIndex = 0;; importDescriptorIndex ++)
             {
                 // Read the name of the import descriptor
 
-                var importDescriptor = Marshal.PtrToStructure<ImageImportDescriptor>(peBuffer + importTableOffset + Marshal.SizeOf<ImageImportDescriptor>() * importDescriptorIndex);
+                var importDescriptor = Unsafe.ReadUnaligned<ImageImportDescriptor>(ref _peBytes[importTableOffset + Unsafe.SizeOf<ImageImportDescriptor>() * importDescriptorIndex]);
 
                 if (importDescriptor.Name == 0)
                 {
                     break;
                 }
 
-                var importDescriptorName = Marshal.PtrToStringAnsi(peBuffer + RvaToVa(importDescriptor.Name));
+                var importDescriptorNameOffset = RvaToVa(importDescriptor.Name);
+
+                var importDescriptorNameLength = 0;
+
+                while (_peBytes[importDescriptorNameOffset + importDescriptorNameLength] != 0x00)
+                {
+                    importDescriptorNameLength += 1;
+                }
+
+                var importDescriptorName = Encoding.ASCII.GetString(new ReadOnlySpan<byte>(_peBytes).Slice(importDescriptorNameOffset, importDescriptorNameLength));
 
                 // Read the functions imported from the import descriptor
 
@@ -249,25 +321,34 @@ namespace Bleak.PortableExecutable
 
             // Calculate the offset of the delay load import table
 
-            if (PeHeaders.PEHeader.DelayImportTableDirectory.RelativeVirtualAddress == 0)
+            if (Headers.PEHeader.DelayImportTableDirectory.RelativeVirtualAddress == 0)
             {
                 return importedFunctions;
             }
 
-            var delayLoadImportTableOffset = RvaToVa(PeHeaders.PEHeader.DelayImportTableDirectory.RelativeVirtualAddress);
+            var delayLoadImportTableOffset = RvaToVa(Headers.PEHeader.DelayImportTableDirectory.RelativeVirtualAddress);
 
             for (var delayLoadImportDescriptorIndex = 0;; delayLoadImportDescriptorIndex ++)
             {
                 // Read the name of the import descriptor
 
-                var importDescriptor = Marshal.PtrToStructure<ImageDelayLoadDescriptor>(peBuffer + delayLoadImportTableOffset + Marshal.SizeOf<ImageDelayLoadDescriptor>() * delayLoadImportDescriptorIndex);
+                var importDescriptor = Unsafe.ReadUnaligned<ImageDelayLoadDescriptor>(ref _peBytes[delayLoadImportTableOffset + Unsafe.SizeOf<ImageDelayLoadDescriptor>() * delayLoadImportDescriptorIndex]);
 
                 if (importDescriptor.DllNameRva == 0)
                 {
                     break;
                 }
 
-                var importDescriptorName = Marshal.PtrToStringAnsi(peBuffer + RvaToVa(importDescriptor.DllNameRva));
+                var importDescriptorNameOffset = RvaToVa(importDescriptor.DllNameRva);
+
+                var importDescriptorNameLength = 0;
+
+                while (_peBytes[importDescriptorNameOffset + importDescriptorNameLength] != 0x00)
+                {
+                    importDescriptorNameLength += 1;
+                }
+
+                var importDescriptorName = Encoding.ASCII.GetString(new ReadOnlySpan<byte>(_peBytes).Slice(importDescriptorNameOffset, importDescriptorNameLength));
 
                 // Read the functions imported from the import descriptor
 
@@ -281,93 +362,65 @@ namespace Bleak.PortableExecutable
             return importedFunctions;
         }
 
-        private PdbDebugData ParsePdbData(IntPtr peBuffer)
-        {
-            // Calculate the offset of the debug table
-
-            if (PeHeaders.PEHeader.DebugTableDirectory.RelativeVirtualAddress == 0)
-            {
-                return default;
-            }
-
-            var debugTableOffset = RvaToVa(PeHeaders.PEHeader.DebugTableDirectory.RelativeVirtualAddress);
-
-            // Read the debug table
-
-            var debugTable = Marshal.PtrToStructure<ImageDebugDirectory>(peBuffer + debugTableOffset);
-
-            // Read the name of the PDB associated with the DLL
-
-            var debugDataOffset = RvaToVa(debugTable.AddressOfRawData);
-
-            var debugData = Marshal.PtrToStructure<ImageDebugData>(peBuffer + debugDataOffset);
-
-            var pdbName = Marshal.PtrToStringAnsi(peBuffer + debugDataOffset + Marshal.SizeOf<ImageDebugData>());
-
-            return new PdbDebugData(debugData.Age, debugData.Guid.ToString().Replace("-", ""), pdbName);
-        }
-
-        private List<TlsCallback> ParseTlsCallbacks(IntPtr peBuffer)
+        private List<TlsCallback> ParseTlsCallbacks()
         {
             var tlsCallbacks = new List<TlsCallback>();
 
             // Calculate the offset of the TLS table
 
-            if (PeHeaders.PEHeader.ThreadLocalStorageTableDirectory.RelativeVirtualAddress == 0)
+            if (Headers.PEHeader.ThreadLocalStorageTableDirectory.RelativeVirtualAddress == 0)
             {
                 return tlsCallbacks;
             }
 
-            var tlsTableOffset = RvaToVa(PeHeaders.PEHeader.ThreadLocalStorageTableDirectory.RelativeVirtualAddress);
+            var tlsTableOffset = RvaToVa(Headers.PEHeader.ThreadLocalStorageTableDirectory.RelativeVirtualAddress);
 
             // Calculate the offset of the TLS callbacks
 
-            long tlsCallbacksRva;
+            int tlsCallbacksOffset;
 
-            if (PeHeaders.PEHeader.Magic == PEMagic.PE32)
+            if (Headers.PEHeader.Magic == PEMagic.PE32)
             {
                 // Read the TLS table
 
-                var tlsTable = Marshal.PtrToStructure<ImageTlsDirectory32>(peBuffer + tlsTableOffset);
+                var tlsTable = Unsafe.ReadUnaligned<ImageTlsDirectory<int>>(ref _peBytes[tlsTableOffset]);
 
                 if (tlsTable.AddressOfCallbacks == 0)
                 {
                     return tlsCallbacks;
                 }
 
-                tlsCallbacksRva = tlsTable.AddressOfCallbacks;
+                tlsCallbacksOffset = RvaToVa((int) (tlsTable.AddressOfCallbacks - (long) Headers.PEHeader.ImageBase));
             }
 
             else
             {
                 // Read the TLS table
 
-                var tlsTable = Marshal.PtrToStructure<ImageTlsDirectory64>(peBuffer + tlsTableOffset);
+                var tlsTable = Unsafe.ReadUnaligned<ImageTlsDirectory<long>>(ref _peBytes[tlsTableOffset]);
 
                 if (tlsTable.AddressOfCallbacks == 0)
                 {
                     return tlsCallbacks;
                 }
 
-                tlsCallbacksRva = tlsTable.AddressOfCallbacks;
+                tlsCallbacksOffset = RvaToVa((int) (tlsTable.AddressOfCallbacks - (long) Headers.PEHeader.ImageBase));
             }
-
-            var tlsCallbacksOffset = RvaToVa((int) (tlsCallbacksRva - (long) PeHeaders.PEHeader.ImageBase));
 
             // Read the offsets of the TLS callbacks
 
             for (var tlsCallbackIndex = 0;; tlsCallbackIndex ++)
             {
-                var tlsCallbackRva = PeHeaders.PEHeader.Magic == PEMagic.PE32
-                                   ? Marshal.ReadInt32(peBuffer + tlsCallbacksOffset + sizeof(int) * tlsCallbackIndex)
-                                   : Marshal.ReadInt64(peBuffer + tlsCallbacksOffset + sizeof(long) * tlsCallbackIndex);
+                var tlsCallbackRva = Headers.PEHeader.Magic == PEMagic.PE32
+                                   ? Unsafe.ReadUnaligned<int>(ref _peBytes[tlsCallbacksOffset + sizeof(int) * tlsCallbackIndex])
+                                   : Unsafe.ReadUnaligned<long>(ref _peBytes[tlsCallbacksOffset + sizeof(long) * tlsCallbackIndex]);
 
                 if (tlsCallbackRva == 0)
                 {
                     break;
                 }
 
-                tlsCallbacks.Add(new TlsCallback(RvaToVa((int) (tlsCallbacksRva - (long) PeHeaders.PEHeader.ImageBase))));
+                tlsCallbacks.Add(new TlsCallback((int) (tlsCallbackRva - (long) Headers.PEHeader.ImageBase)));
             }
 
             return tlsCallbacks;
@@ -375,22 +428,9 @@ namespace Bleak.PortableExecutable
 
         private int RvaToVa(int rva)
         {
-            var sectionHeader = PeHeaders.SectionHeaders.First(section => section.VirtualAddress <= rva && section.VirtualAddress + section.VirtualSize > rva);
+            var sectionHeader = Headers.SectionHeaders.First(section => section.VirtualAddress <= rva && section.VirtualAddress + section.VirtualSize > rva);
 
             return sectionHeader.PointerToRawData + (rva - sectionHeader.VirtualAddress);
-        }
-
-        private void ValidatePe()
-        {
-            if (!PeHeaders.IsDll)
-            {
-                throw new BadImageFormatException("The file provided was not a DLL");
-            }
-
-            if (PeHeaders.CorHeader != null)
-            {
-                throw new BadImageFormatException(".Net DLL's are not supported");
-            }
         }
     }
 }

@@ -1,13 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>netcoreapp2.2</TargetFramework>
-        <PackageVersion>3.0.5</PackageVersion>
+        <TargetFramework>netcoreapp3.0</TargetFramework>
+        <LangVersion>8</LangVersion>
+        <PackageVersion>3.1.0</PackageVersion>
         <Authors>Akaion</Authors>
         <Description>A Windows native DLL injection library that supports several methods of injection.</Description>
         <RepositoryUrl>https://github.com/Akaion/Bleak</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
-        <LangVersion>latest</LangVersion>
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">

@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace Bleak.Native.Structures
 {
     [StructLayout(LayoutKind.Explicit, Size = 32)]
-    internal struct ImageDelayLoadDescriptor
+    internal readonly struct ImageDelayLoadDescriptor
     {
         [FieldOffset(0x04)]
         internal readonly int DllNameRva;

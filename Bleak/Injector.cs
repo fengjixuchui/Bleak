@@ -7,49 +7,32 @@ using Bleak.Injection.Methods;
 namespace Bleak
 {
     /// <summary>
-    /// An instance capable of injecting a DLL into a remote process
+    /// Provides the ability to inject a DLL into a process
     /// </summary>
-    public class Injector : IDisposable
+    public sealed class Injector : IDisposable
     {
         private bool _injected;
 
-        private readonly InjectionBase _injectionMethod;
+        private readonly InjectionBase _injectionBase;
 
         /// <summary>
-        /// An instance capable of injecting a DLL into a remote process
+        /// Provides the ability to inject a DLL into a process
         /// </summary>
         public Injector(int processId, byte[] dllBytes, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
         {
             if (injectionMethod == InjectionMethod.ManualMap)
             {
-                _injectionMethod = new ManualMap(dllBytes, GetProcess(processId), injectionFlags);
+                _injectionBase = new ManualMap(dllBytes, GetProcess(processId), injectionMethod, injectionFlags);
             }
 
             else
             {
-                var dllPath = CreateTemporaryDll(dllBytes);
-
-                switch (injectionMethod)
-                {
-                    case InjectionMethod.CreateThread:
-                    {
-                        _injectionMethod = new CreateThread(dllPath, GetProcess(processId), injectionFlags);
-
-                        break;
-                    }
-
-                    case InjectionMethod.HijackThread:
-                    {
-                        _injectionMethod = new HijackThread(dllPath, GetProcess(processId), injectionFlags);
-
-                        break;
-                    }
-                }
+                _injectionBase = new LdrLoadDll(CreateTemporaryDll(dllBytes), GetProcess(processId), injectionMethod, injectionFlags);
             }
         }
 
         /// <summary>
-        /// An instance capable of injecting a DLL into a remote process
+        /// Provides the ability to inject a DLL into a process
         /// </summary>
         public Injector(int processId, string dllPath, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
         {
@@ -58,66 +41,35 @@ namespace Bleak
                 dllPath = CreateTemporaryDll(File.ReadAllBytes(dllPath));
             }
 
-            switch (injectionMethod)
+            if (injectionMethod == InjectionMethod.ManualMap)
             {
-                case InjectionMethod.CreateThread:
-                {
-                    _injectionMethod = new CreateThread(dllPath, GetProcess(processId), injectionFlags);
+                _injectionBase = new ManualMap(dllPath, GetProcess(processId), injectionMethod, injectionFlags);
+            }
 
-                    break;
-                }
-
-                case InjectionMethod.HijackThread:
-                {
-                    _injectionMethod = new HijackThread(dllPath, GetProcess(processId), injectionFlags);
-
-                    break;
-                }
-
-                case InjectionMethod.ManualMap:
-                {
-                    _injectionMethod = new ManualMap(dllPath, GetProcess(processId), injectionFlags);
-
-                    break;
-                }
+            else
+            {
+                _injectionBase = new LdrLoadDll(dllPath, GetProcess(processId), injectionMethod, injectionFlags);
             }
         }
 
         /// <summary>
-        /// An instance capable of injecting a DLL into a remote process
+        /// Provides the ability to inject a DLL into a process
         /// </summary>
         public Injector(string processName, byte[] dllBytes, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
         {
             if (injectionMethod == InjectionMethod.ManualMap)
             {
-                _injectionMethod = new ManualMap(dllBytes, GetProcess(processName), injectionFlags);
+                _injectionBase = new ManualMap(dllBytes, GetProcess(processName), injectionMethod, injectionFlags);
             }
 
             else
             {
-                var dllPath = CreateTemporaryDll(dllBytes);
-
-                switch (injectionMethod)
-                {
-                    case InjectionMethod.CreateThread:
-                    {
-                        _injectionMethod = new CreateThread(dllPath, GetProcess(processName), injectionFlags);
-
-                        break;
-                    }
-
-                    case InjectionMethod.HijackThread:
-                    {
-                        _injectionMethod = new HijackThread(dllPath, GetProcess(processName), injectionFlags);
-
-                        break;
-                    }
-                }
+                _injectionBase = new LdrLoadDll(CreateTemporaryDll(dllBytes), GetProcess(processName), injectionMethod, injectionFlags);
             }
         }
 
         /// <summary>
-        /// An instance capable of injecting a DLL into a remote process
+        /// Provides the ability to inject a DLL into a process
         /// </summary>
         public Injector(string processName, string dllPath, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
         {
@@ -126,41 +78,27 @@ namespace Bleak
                 dllPath = CreateTemporaryDll(File.ReadAllBytes(dllPath));
             }
 
-            switch (injectionMethod)
+            if (injectionMethod == InjectionMethod.ManualMap)
             {
-                case InjectionMethod.CreateThread:
-                {
-                    _injectionMethod = new CreateThread(dllPath, GetProcess(processName), injectionFlags);
+                _injectionBase = new ManualMap(dllPath, GetProcess(processName), injectionMethod, injectionFlags);
+            }
 
-                    break;
-                }
-
-                case InjectionMethod.HijackThread:
-                {
-                    _injectionMethod = new HijackThread(dllPath, GetProcess(processName), injectionFlags);
-
-                    break;
-                }
-
-                case InjectionMethod.ManualMap:
-                {
-                    _injectionMethod = new ManualMap(dllPath, GetProcess(processName), injectionFlags);
-
-                    break;
-                }
+            else
+            {
+                _injectionBase = new LdrLoadDll(dllPath, GetProcess(processName), injectionMethod, injectionFlags);
             }
         }
 
         /// <summary>
-        /// Frees the unmanaged resources used by the instance
+        /// Frees the unmanaged resources used by this class
         /// </summary>
         public void Dispose()
         {
-            _injectionMethod.Dispose();
+            _injectionBase.Dispose();
         }
 
         /// <summary>
-        /// Ejects the injected DLL from the specified remote process
+        /// Ejects the injected DLL from the process
         /// </summary>
         public void EjectDll()
         {
@@ -169,37 +107,37 @@ namespace Bleak
                 return;
             }
 
-            _injectionMethod.Eject();
+            _injectionBase.Eject();
 
             _injected = false;
         }
 
         /// <summary>
-        /// Injects the specified DLL into the specified remote process
+        /// Injects the DLL into the process
         /// </summary>
         public IntPtr InjectDll()
         {
             if (_injected)
             {
-                return _injectionMethod.DllBaseAddress;
+                return _injectionBase.DllBaseAddress;
             }
 
-            _injectionMethod.Inject();
+            _injectionBase.Inject();
 
             _injected = true;
 
-            return _injectionMethod.DllBaseAddress;
+            return _injectionBase.DllBaseAddress;
         }
 
-        private string CreateTemporaryDll(byte[] dllBytes)
+        private static string CreateTemporaryDll(byte[] dllBytes)
         {
-            // Create a directory to store the temporary DLL
+            // Ensure a directory exists on disk to store the temporary DLL
 
             var temporaryDirectoryInfo = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Bleak", "DLL"));
 
             // Clear the directory
 
-            foreach (var file in temporaryDirectoryInfo.GetFiles())
+            foreach (var file in temporaryDirectoryInfo.EnumerateFiles())
             {
                 try
                 {
@@ -212,7 +150,7 @@ namespace Bleak
                 }
             }
 
-            // Create a temporary DLL
+            // Create a temporary DLL with a randomised name
 
             var temporaryDllPath = Path.Combine(temporaryDirectoryInfo.FullName, Path.GetRandomFileName() + ".dll");
 
@@ -229,7 +167,7 @@ namespace Bleak
             return temporaryDllPath;
         }
 
-        private Process GetProcess(int processId)
+        private static Process GetProcess(int processId)
         {
             try
             {
@@ -238,11 +176,11 @@ namespace Bleak
 
             catch (ArgumentException)
             {
-                throw new ArgumentException($"No process with the id {processId} is currently running");
+                throw new ArgumentException($"No process with the ID {processId} is currently running");
             }
         }
 
-        private Process GetProcess(string processName)
+        private static Process GetProcess(string processName)
         {
             try
             {

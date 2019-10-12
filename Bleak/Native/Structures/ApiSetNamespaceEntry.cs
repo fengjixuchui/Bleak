@@ -11,7 +11,7 @@ namespace Bleak.Native.Structures
         [FieldOffset(0x08)]
         internal readonly int NameLength;
 
-        [FieldOffset(0x10)] 
+        [FieldOffset(0x10)]
         internal readonly int ValueOffset;
     }
 }

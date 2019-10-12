@@ -44,16 +44,15 @@ The example below describes a basic implementation of the library.
 ```csharp
 using Bleak;
 
-using (var injector = new Injector("processName", "dllPath", InjectionMethod.CreateThread, InjectionFlags.None))
-{
-    // Inject the DLL into the remote process
-	
-    var dllBaseAddress = injector.InjectDll();
-	
-    // Eject the DLL from the process
+using var injector = new Injector("processName", "dllPath", InjectionMethod.CreateThread, InjectionFlags.None);
 
-    injector.EjectDll();
-}
+// Inject the DLL into the process
+	
+var dllBaseAddress = injector.InjectDll();
+	
+// Eject the DLL from the process
+
+injector.EjectDll();
 ```
 
 ----
@@ -75,13 +74,25 @@ var injector = new Injector("processName", dllBytes, InjectionMethod.CreateThrea
 
 ### Caveats
 
-* Injecting with a byte array will result in the provided DLL being written to disk in the temporary folder, unless the method of injection is ManualMap.
+* Attemping to inject into a system level process will require your program to be run in Administrator mode.
 
-* Injecting into a system process requires the program to be run in Administrator mode.
+* Injecting a byte array (that represents a DLL) will result in a temporary DLL being written to disk in `%temp%`, unless the method of injection is ManualMap, in which case nothing will be written to disk.
 
-* ManualMap injection only supports structured exception handling. This means you cannot use vectored exception handling (C++ uses this) if you wish to use this method of injection.
+* Injecting with the HideDllFromPeb flag will currently result in your DLL not being able to be ejected.
 
-* ManualMap injection relies on a PDB being present for ntdll.dll and so, the first time this method is used a PDB for ntdll.dll will be downloaded and cached in the temporary folder. Note that anytime your system updates, a new PDB version may need to be downloaded and re-cached in the temporary folder. This process make take a few seconds depending on your connection speed.
+* ManualMap injection supports the intialisation of exception handling, however, this is limited to structured exception handling. Vectored exception handlers are not setup in the remote process during injection and any exceptions being handled using this type of exception handling will not be caught.
+
+* ManualMap injection relies on a PDB being present for ntdll.dll and, so, the first time this method is used, a PDB for ntdll.dll will be downloaded and cached in `%temp%`. Note that anytime your system performs an update, a new version of this PDB may need to be downloaded and re-cached. This process may take a few seconds depending on your connection speed.
+
+----
+
+### Warnings
+
+To those of you that are using the source code of this library as a reference, please note the following.
+
+* Many of the native structure definitions used, particularly the internal ones that are not documented on MSDN are incomplete due to only specific members being referenced in the codebase.
+
+* Unsigned members of the native structures used have been changed to signed members to ensure CLS compliance.
 
 ----
 

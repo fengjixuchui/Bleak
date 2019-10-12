@@ -2,45 +2,56 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using Bleak.Assembly;
-using Bleak.Exceptions;
-using Bleak.Native;
 using Bleak.Native.Enumerations;
 using Bleak.Native.PInvoke;
 using Bleak.Native.Structures;
-using Bleak.ProgramDatabase;
-using Bleak.Memory;
+using Bleak.RemoteProcess.FunctionCall.Interfaces;
+using Bleak.RemoteProcess.FunctionCall.Methods;
+using Bleak.RemoteProcess.Structures;
 
 namespace Bleak.RemoteProcess
 {
-    internal class ProcessManager : IDisposable
+    internal sealed class ProcessManager : IDisposable
     {
         internal readonly bool IsWow64;
 
+        internal readonly Memory Memory;
+
         internal readonly List<Module> Modules;
 
-        internal readonly Lazy<PdbFile> PdbFile;
-
-        internal readonly PebManager PebManager;
+        internal readonly Peb Peb;
 
         internal readonly Process Process;
 
-        internal ProcessManager(Process process)
+        private readonly IFunctionCall _functionCall;
+
+        internal ProcessManager(Process process, InjectionMethod injectionMethod)
         {
             Process = process;
 
             EnableDebuggerPrivileges();
 
-            IsWow64 = IsWow64Process();
+            IsWow64 = GetProcessArchitecture();
 
-            PebManager = new PebManager(IsWow64, Process.SafeHandle);
+            Memory = new Memory(process.SafeHandle);
+
+            Peb = ReadPeb();
 
             Modules = GetModules();
 
-            PdbFile = new Lazy<PdbFile>(() => new PdbFile(Modules.Find(module => module.Name.Equals("ntdll.dll", StringComparison.OrdinalIgnoreCase)), IsWow64));
+            if (injectionMethod == InjectionMethod.CreateThread)
+            {
+                _functionCall = new CreateThread(Memory, process);
+            }
+
+            else
+            {
+                _functionCall = new HijackThread(Memory, process);
+            }
         }
 
         public void Dispose()
@@ -50,30 +61,28 @@ namespace Bleak.RemoteProcess
 
         internal void CallFunction(CallingConvention callingConvention, IntPtr functionAddress, params long[] parameters)
         {
-            CallFunctionInternal(new FunctionCall(IsWow64, functionAddress, callingConvention, parameters, IntPtr.Zero));
+            _functionCall.CallFunction(new CallDescriptor(callingConvention, functionAddress, IsWow64, parameters, IntPtr.Zero));
         }
 
         internal TStructure CallFunction<TStructure>(CallingConvention callingConvention, IntPtr functionAddress, params long[] parameters) where TStructure : struct
         {
-            var returnAddress = MemoryManager.AllocateVirtualMemory(Process.SafeHandle, IntPtr.Zero, Marshal.SizeOf<TStructure>(), MemoryProtectionType.ReadWrite);
+            var returnBuffer = Memory.AllocateBlock(IntPtr.Zero, Unsafe.SizeOf<TStructure>(), ProtectionType.ReadWrite);
 
-            CallFunctionInternal(new FunctionCall(IsWow64, functionAddress, callingConvention, parameters, returnAddress));
+            _functionCall.CallFunction(new CallDescriptor(callingConvention, functionAddress, IsWow64, parameters, returnBuffer));
 
             try
             {
-                return MemoryManager.ReadVirtualMemory<TStructure>(Process.SafeHandle, returnAddress);
+                return Memory.Read<TStructure>(returnBuffer);
             }
 
             finally
             {
-                MemoryManager.FreeVirtualMemory(Process.SafeHandle, returnAddress);
+                Memory.FreeBlock(returnBuffer);
             }
         }
 
         internal IntPtr GetFunctionAddress(string moduleName, string functionName)
         {
-            // Search the module list for the module
-
             var module = Modules.Find(m => m.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
 
             if (module is null)
@@ -87,15 +96,11 @@ namespace Bleak.RemoteProcess
 
             var functionAddress = module.BaseAddress + function.Offset;
 
-            // Calculate the start and end address of the export directory
-
-            var exportDirectory = module.PeImage.Value.PeHeaders.PEHeader.ExportTableDirectory;
-
-            var exportDirectoryStartAddress = module.BaseAddress + exportDirectory.RelativeVirtualAddress;
-
-            var exportDirectoryEndAddress = exportDirectoryStartAddress + exportDirectory.Size;
-
             // Determine if the function is forwarded to another function
+
+            var exportDirectoryStartAddress = module.BaseAddress + module.PeImage.Value.Headers.PEHeader.ExportTableDirectory.RelativeVirtualAddress;
+
+            var exportDirectoryEndAddress = exportDirectoryStartAddress + module.PeImage.Value.Headers.PEHeader.ExportTableDirectory.Size;
 
             if ((long) functionAddress < (long) exportDirectoryStartAddress || (long) functionAddress > (long) exportDirectoryEndAddress)
             {
@@ -108,9 +113,9 @@ namespace Bleak.RemoteProcess
 
             while (true)
             {
-                var currentByte = MemoryManager.ReadVirtualMemory<byte>(Process.SafeHandle, functionAddress);
+                var currentByte = Memory.Read<byte>(functionAddress);
 
-                if (currentByte == 0x00)
+                if (currentByte == byte.MinValue)
                 {
                     break;
                 }
@@ -120,15 +125,13 @@ namespace Bleak.RemoteProcess
                 functionAddress += 1;
             }
 
-            var forwardedFunction = Encoding.ASCII.GetString(forwardedFunctionBytes.ToArray()).Split('.');
+            var forwardedFunction = Encoding.ASCII.GetString(forwardedFunctionBytes.ToArray()).Split(".");
 
             return GetFunctionAddress(forwardedFunction[0] + ".dll", forwardedFunction[1]);
         }
 
         internal IntPtr GetFunctionAddress(string moduleName, short functionOrdinal)
         {
-            // Search the module list for the module
-
             var module = Modules.Find(m => m.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
 
             if (module is null)
@@ -136,11 +139,85 @@ namespace Bleak.RemoteProcess
                 return IntPtr.Zero;
             }
 
-            // Find the name of the function
+            // Determine the name of the function from its ordinal
 
             var function = module.PeImage.Value.ExportedFunctions.Find(f => f.Ordinal == functionOrdinal);
 
             return GetFunctionAddress(moduleName, function.Name);
+        }
+
+        internal Dictionary<IntPtr, LdrDataTableEntry<long>> ReadPebEntries()
+        {
+            var entries = new Dictionary<IntPtr, LdrDataTableEntry<long>>();
+
+            // Read the loader data of the PEB
+
+            var pebLoaderData = Memory.Read<PebLdrEntry<long>>(Peb.LoaderAddress);
+
+            // Read the entries of the InMemoryOrder (circular) doubly linked list
+
+            var currentEntryAddress = pebLoaderData.InMemoryOrderModuleList.Flink;
+
+            var inMemoryOrderLinksOffset = Marshal.OffsetOf<LdrDataTableEntry<long>>("InMemoryOrderLinks");
+
+            while (true)
+            {
+                // Read the current entry
+
+                var entryAddress = currentEntryAddress - (int) inMemoryOrderLinksOffset;
+
+                var entry = Memory.Read<LdrDataTableEntry<long>>((IntPtr) entryAddress);
+
+                entries.Add((IntPtr) entryAddress, entry);
+
+                if (currentEntryAddress == pebLoaderData.InMemoryOrderModuleList.Blink)
+                {
+                    break;
+                }
+
+                // Determine the address of the next entry
+
+                currentEntryAddress = entry.InMemoryOrderLinks.Flink;
+            }
+
+            return entries;
+        }
+
+        internal Dictionary<IntPtr, LdrDataTableEntry<int>> ReadWow64PebEntries()
+        {
+            var entries = new Dictionary<IntPtr, LdrDataTableEntry<int>>();
+
+            // Read the loader data of the PEB
+
+            var pebLoaderData = Memory.Read<PebLdrEntry<int>>(Peb.LoaderAddress);
+
+            // Read the entries of the InMemoryOrder (circular) doubly linked list
+
+            var currentEntryAddress = pebLoaderData.InMemoryOrderModuleList.Flink;
+
+            var inMemoryOrderLinksOffset = Marshal.OffsetOf<LdrDataTableEntry<int>>("InMemoryOrderLinks");
+
+            while (true)
+            {
+                // Read the current entry
+
+                var entryAddress = currentEntryAddress - (int) inMemoryOrderLinksOffset;
+
+                var entry = Memory.Read<LdrDataTableEntry<int>>((IntPtr) entryAddress);
+
+                entries.Add((IntPtr) entryAddress, entry);
+
+                if (currentEntryAddress == pebLoaderData.InMemoryOrderModuleList.Blink)
+                {
+                    break;
+                }
+
+                // Determine the address of the next entry
+
+                currentEntryAddress = entry.InMemoryOrderLinks.Flink;
+            }
+
+            return entries;
         }
 
         internal void Refresh()
@@ -152,103 +229,7 @@ namespace Bleak.RemoteProcess
             Process.Refresh();
         }
 
-        private void CallFunctionInternal(FunctionCall functionCall)
-        {
-            // Write the shellcode used to perform the function call into the remote process
-
-            var shellcode = Assembler.AssembleFunctionCall(functionCall);
-
-            var shellcodeAddress = MemoryManager.AllocateVirtualMemory(Process.SafeHandle, IntPtr.Zero, shellcode.Length, MemoryProtectionType.ReadWrite);
-
-            MemoryManager.WriteVirtualMemory(Process.SafeHandle, shellcodeAddress, shellcode);
-
-            MemoryManager.ProtectVirtualMemory(Process.SafeHandle, shellcodeAddress, shellcode.Length, MemoryProtectionType.ExecuteRead);
-
-            // Create a thread to execute the shellcode in the remote process
-
-            var ntStatus = Ntdll.NtCreateThreadEx(out var threadHandle, Constants.ThreadAllAccess, IntPtr.Zero, Process.SafeHandle, Modules[0].BaseAddress, IntPtr.Zero, ThreadCreationFlags.CreateSuspended | ThreadCreationFlags.HideFromDebugger, 0, 0, 0, IntPtr.Zero);
-
-            if (ntStatus != NtStatus.Success)
-            {
-                throw new PInvokeException("Failed to call NtCreateThreadEx", ntStatus);
-            }
-
-            if (IsWow64)
-            {
-                // Get the context of the thread
-
-                var threadContext = new Context32 {ContextFlags = ContextFlags.Integer};
-
-                var threadContextBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<Context32>());
-
-                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
-
-                if (!Kernel32.Wow64GetThreadContext(threadHandle, threadContextBuffer))
-                {
-                    throw new PInvokeException("Failed to call Wow64GetThreadContext");
-                }
-
-                threadContext = Marshal.PtrToStructure<Context32>(threadContextBuffer);
-
-                // Change the spoofed start address to the address of the shellcode
-
-                threadContext.Eax = (int) shellcodeAddress;
-
-                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
-
-                // Update the context of the thread
-
-                if (!Kernel32.Wow64SetThreadContext(threadHandle, threadContextBuffer))
-                {
-                    throw new PInvokeException("Failed to call Wow64SetThreadContext");
-                }
-
-                Marshal.FreeHGlobal(threadContextBuffer);
-            }
-
-            else
-            {
-                // Get the context of the thread
-
-                var threadContext = new Context64 {ContextFlags = ContextFlags.Integer};
-
-                var threadContextBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<Context64>());
-
-                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
-
-                if (!Kernel32.GetThreadContext(threadHandle, threadContextBuffer))
-                {
-                    throw new PInvokeException("Failed to call GetThreadContext");
-                }
-
-                threadContext = Marshal.PtrToStructure<Context64>(threadContextBuffer);
-
-                // Change the spoofed start address to the address of the shellcode
-
-                threadContext.Rcx = (long) shellcodeAddress;
-
-                Marshal.StructureToPtr(threadContext, threadContextBuffer, false);
-
-                // Update the context of the thread
-
-                if (!Kernel32.SetThreadContext(threadHandle, threadContextBuffer))
-                {
-                    throw new PInvokeException("Failed to call SetThreadContext");
-                }
-
-                Marshal.FreeHGlobal(threadContextBuffer);
-            }
-
-            Kernel32.ResumeThread(threadHandle);
-
-            Kernel32.WaitForSingleObject(threadHandle, int.MaxValue);
-
-            threadHandle.Dispose();
-
-            MemoryManager.FreeVirtualMemory(Process.SafeHandle, shellcodeAddress);
-        }
-
-        private void EnableDebuggerPrivileges()
+        private static void EnableDebuggerPrivileges()
         {
             try
             {
@@ -269,17 +250,17 @@ namespace Bleak.RemoteProcess
             {
                 var filePathRegex = new Regex("System32", RegexOptions.IgnoreCase);
 
-                foreach (var entry in PebManager.GetWow64PebEntries().Values)
+                foreach (var entry in ReadWow64PebEntries().Values)
                 {
                     // Read the file path of the entry
 
-                    var entryFilePathBytes = MemoryManager.ReadVirtualMemory(Process.SafeHandle, (IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
+                    var entryFilePathBytes = Memory.ReadBlock((IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
 
                     var entryFilePath = filePathRegex.Replace(Encoding.Unicode.GetString(entryFilePathBytes), "SysWOW64");
 
                     // Read the name of the entry
 
-                    var entryNameBytes = MemoryManager.ReadVirtualMemory(Process.SafeHandle, (IntPtr) entry.BaseDllName.Buffer, entry.BaseDllName.Length);
+                    var entryNameBytes = Memory.ReadBlock((IntPtr) entry.BaseDllName.Buffer, entry.BaseDllName.Length);
 
                     var entryName = Encoding.Unicode.GetString(entryNameBytes);
 
@@ -289,17 +270,17 @@ namespace Bleak.RemoteProcess
 
             else
             {
-                foreach (var entry in PebManager.GetPebEntries().Values)
+                foreach (var entry in ReadPebEntries().Values)
                 {
                     // Read the file path of the entry
 
-                    var entryFilePathBytes = MemoryManager.ReadVirtualMemory(Process.SafeHandle, (IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
+                    var entryFilePathBytes = Memory.ReadBlock((IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
 
                     var entryFilePath = Encoding.Unicode.GetString(entryFilePathBytes);
 
                     // Read the name of the entry
 
-                    var entryNameBytes = MemoryManager.ReadVirtualMemory(Process.SafeHandle, (IntPtr) entry.BaseDllName.Buffer, entry.BaseDllName.Length);
+                    var entryNameBytes = Memory.ReadBlock((IntPtr) entry.BaseDllName.Buffer, entry.BaseDllName.Length);
 
                     var entryName = Encoding.Unicode.GetString(entryNameBytes);
 
@@ -310,14 +291,61 @@ namespace Bleak.RemoteProcess
             return modules;
         }
 
-        private bool IsWow64Process()
+        private bool GetProcessArchitecture()
         {
             if (!Kernel32.IsWow64Process(Process.SafeHandle, out var isWow64Process))
             {
-                throw new PInvokeException("Failed to call IsWow64Process");
+                throw new Win32Exception($"Failed to call IsWow64Process with error code {Marshal.GetLastWin32Error()}");
             }
 
             return isWow64Process;
+        }
+
+        private Peb ReadPeb()
+        {
+            if (IsWow64)
+            {
+                // Query the process for the address of its WOW64 PEB
+
+                var wow64PebAddressBuffer = new byte[sizeof(long)];
+
+                var ntStatus = Ntdll.NtQueryInformationProcess(Process.SafeHandle, ProcessInformationClass.Wow64Information, ref wow64PebAddressBuffer[0], wow64PebAddressBuffer.Length, out var returnLength);
+
+                if (ntStatus != NtStatus.Success || returnLength != wow64PebAddressBuffer.Length)
+                {
+                    throw new Win32Exception($"Failed to call NtQueryInformationProcess with error code {ntStatus}");
+                }
+
+                var wow64PebAddress = Unsafe.ReadUnaligned<IntPtr>(ref wow64PebAddressBuffer[0]);
+
+                // Read the WOW64 PEB
+
+                var wow64Peb = Memory.Read<Peb<int>>(wow64PebAddress);
+
+                return new Peb((IntPtr) wow64Peb.ApiSetMap, (IntPtr) wow64Peb.Ldr);
+            }
+
+            else
+            {
+                // Query the process for the address of its PEB
+
+                var processBasicInformationBuffer = new byte[Unsafe.SizeOf<ProcessBasicInformation>()];
+
+                var ntStatus = Ntdll.NtQueryInformationProcess(Process.SafeHandle, ProcessInformationClass.BasicInformation, ref processBasicInformationBuffer[0], processBasicInformationBuffer.Length, out var returnLength);
+
+                if (ntStatus != NtStatus.Success || returnLength != processBasicInformationBuffer.Length)
+                {
+                    throw new Win32Exception($"Failed to call NtQueryInformationProcess with error code {ntStatus}");
+                }
+
+                var pebAddress = Unsafe.ReadUnaligned<ProcessBasicInformation>(ref processBasicInformationBuffer[0]).PebBaseAddress;
+
+                // Read the PEB
+
+                var peb = Memory.Read<Peb<long>>(pebAddress);
+
+                return new Peb((IntPtr) peb.ApiSetMap, (IntPtr) peb.Ldr);
+            }
         }
     }
 }

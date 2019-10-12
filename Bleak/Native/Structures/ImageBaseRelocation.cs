@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace Bleak.Native.Structures
 {
     [StructLayout(LayoutKind.Sequential)]
-    internal struct ImageBaseRelocation
+    internal readonly struct ImageBaseRelocation
     {
         internal readonly int VirtualAddress;
 

@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace Bleak.Native.Structures
 {
     [StructLayout(LayoutKind.Sequential)]
-    internal struct ProcessBasicInformation
+    internal readonly struct ProcessBasicInformation
     {
         private readonly IntPtr ExitStatus;
 
