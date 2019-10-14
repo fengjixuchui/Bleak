@@ -25,9 +25,14 @@ namespace Bleak
                 _injectionBase = new ManualMap(dllBytes, GetProcess(processId), injectionMethod, injectionFlags);
             }
 
-            else
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
             {
                 _injectionBase = new LdrLoadDll(CreateTemporaryDll(dllBytes), GetProcess(processId), injectionMethod, injectionFlags);
+            }
+
+            else
+            {
+                throw new ArgumentException("The injection method provided was invalid");
             }
         }
 
@@ -46,9 +51,14 @@ namespace Bleak
                 _injectionBase = new ManualMap(dllPath, GetProcess(processId), injectionMethod, injectionFlags);
             }
 
-            else
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
             {
                 _injectionBase = new LdrLoadDll(dllPath, GetProcess(processId), injectionMethod, injectionFlags);
+            }
+
+            else
+            {
+                throw new ArgumentException("The injection method provided was invalid");
             }
         }
 
@@ -62,9 +72,14 @@ namespace Bleak
                 _injectionBase = new ManualMap(dllBytes, GetProcess(processName), injectionMethod, injectionFlags);
             }
 
-            else
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
             {
                 _injectionBase = new LdrLoadDll(CreateTemporaryDll(dllBytes), GetProcess(processName), injectionMethod, injectionFlags);
+            }
+
+            else
+            {
+                throw new ArgumentException("The injection method provided was invalid");
             }
         }
 
@@ -83,9 +98,14 @@ namespace Bleak
                 _injectionBase = new ManualMap(dllPath, GetProcess(processName), injectionMethod, injectionFlags);
             }
 
-            else
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
             {
                 _injectionBase = new LdrLoadDll(dllPath, GetProcess(processName), injectionMethod, injectionFlags);
+            }
+
+            else
+            {
+                throw new ArgumentException("The injection method provided was invalid");
             }
         }
 

@@ -12,9 +12,3 @@ jobs:
         
       - name: Build
         run: dotnet build --configuration Release
-      
-      - name: Pack
-        run: dotnet pack --configuration Release --no-build
-      
-      - name: Push package to nuget
-        run: dotnet nuget push Bleak\bin\Release\*.nupkg --source "https://api.nuget.org/v3/index.json" --api-key "${{secrets.NUGET_API_KEY}}"
