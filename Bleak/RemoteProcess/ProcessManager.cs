@@ -2,314 +2,234 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using Bleak.Assembly;
-using Bleak.Memory;
-using Bleak.ProgramDatabase;
-using Bleak.RemoteProcess.Objects;
-using Bleak.Shared;
-using Bleak.Shared.Handlers;
-using static Bleak.Native.Enumerations;
-using static Bleak.Native.PInvoke;
-using static Bleak.Native.Structures;
+using Bleak.Native.Enumerations;
+using Bleak.Native.PInvoke;
+using Bleak.Native.Structures;
+using Bleak.RemoteProcess.FunctionCall.Interfaces;
+using Bleak.RemoteProcess.FunctionCall.Methods;
+using Bleak.RemoteProcess.Structures;
 
 namespace Bleak.RemoteProcess
 {
-    internal class ProcessManager : IDisposable
+    internal sealed class ProcessManager : IDisposable
     {
         internal readonly bool IsWow64;
 
+        internal readonly Memory Memory;
+
         internal readonly List<Module> Modules;
-        
+
         internal readonly Peb Peb;
-        
+
         internal readonly Process Process;
-        
-        private readonly Assembler _assembler;
-        
-        private readonly Dictionary<string, IntPtr> _functionAddressCache;
-        
-        private readonly MemoryManager _memoryManager;
-        
-        private readonly Lazy<PdbParser> _pdbParser;
-        
-        internal ProcessManager(int processId)
+
+        private readonly IFunctionCall _functionCall;
+
+        internal ProcessManager(Process process, InjectionMethod injectionMethod)
         {
-            Process = GetProcess(processId);
+            Process = process;
 
-            IsWow64 = IsProcessWow64();
+            EnableDebuggerPrivileges();
 
-            _memoryManager = new MemoryManager(Process.SafeHandle);
-            
-            Peb = GetPeb();
-            
+            IsWow64 = GetProcessArchitecture();
+
+            Memory = new Memory(process.SafeHandle);
+
+            Peb = ReadPeb();
+
             Modules = GetModules();
 
-            _assembler = new Assembler(IsWow64);
-            
-            _functionAddressCache = new Dictionary<string, IntPtr>();
-            
-            _pdbParser = new Lazy<PdbParser>(() => new PdbParser(Modules.Find(module => module.Name == "ntdll.dll")));
-            
-            EnableDebuggerPrivileges();
+            if (injectionMethod == InjectionMethod.CreateThread)
+            {
+                _functionCall = new CreateThread(Memory, process);
+            }
+
+            else
+            {
+                _functionCall = new HijackThread(Memory, process);
+            }
         }
-        
-        internal ProcessManager(string processName)
-        {
-            Process = GetProcess(processName);
 
-            IsWow64 = IsProcessWow64();
-
-            _memoryManager = new MemoryManager(Process.SafeHandle);
-            
-            Peb = GetPeb();
-
-            Modules = GetModules();
-            
-            _assembler = new Assembler(IsWow64);
-
-            _functionAddressCache = new Dictionary<string, IntPtr>();
-            
-            _pdbParser = new Lazy<PdbParser>(() => new PdbParser(Modules.Find(module => module.Name == "ntdll.dll")));
-            
-            EnableDebuggerPrivileges();
-        }
-        
         public void Dispose()
         {
             Process.Dispose();
         }
 
-        internal void CallFunction(CallingConvention callingConvention, IntPtr functionAddress, params ulong[] parameters)
+        internal void CallFunction(CallingConvention callingConvention, IntPtr functionAddress, params long[] parameters)
         {
-            // Write the shellcode used to call the function into the remote process
-
-            var shellcode = _assembler.AssembleFunctionCall(callingConvention, functionAddress, IntPtr.Zero, parameters);
-
-            var shellcodeBuffer = _memoryManager.AllocateVirtualMemory(shellcode.Length);
-            
-            _memoryManager.WriteVirtualMemory(shellcodeBuffer, shellcode);
-            
-            // Create a thread to call the shellcode in the remote process
-            
-            var ntStatus = RtlCreateUserThread(Process.SafeHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, shellcodeBuffer, IntPtr.Zero, out var threadHandle, IntPtr.Zero); 
-            
-            if (ntStatus != NtStatus.Success)
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to create a thread in the remote process");
-            }
-
-            WaitForSingleObject(threadHandle, int.MaxValue);
-            
-            threadHandle.Dispose();
-            
-            _memoryManager.FreeVirtualMemory(shellcodeBuffer);
+            _functionCall.CallFunction(new CallDescriptor(callingConvention, functionAddress, IsWow64, parameters, IntPtr.Zero));
         }
-        
-        internal TStructure CallFunction<TStructure>(CallingConvention callingConvention, IntPtr functionAddress, params ulong[] parameters) where TStructure : struct
+
+        internal TStructure CallFunction<TStructure>(CallingConvention callingConvention, IntPtr functionAddress, params long[] parameters) where TStructure : struct
         {
-            // Allocate a buffer in the remote process to store the returned value of the function
+            var returnBuffer = Memory.AllocateBlock(IntPtr.Zero, Unsafe.SizeOf<TStructure>(), ProtectionType.ReadWrite);
 
-            var returnBuffer = _memoryManager.AllocateVirtualMemory(Marshal.SizeOf<TStructure>());
-            
-            // Write the shellcode used to call the function into the remote process
+            _functionCall.CallFunction(new CallDescriptor(callingConvention, functionAddress, IsWow64, parameters, returnBuffer));
 
-            var shellcode = _assembler.AssembleFunctionCall(callingConvention, functionAddress, returnBuffer, parameters);
-
-            var shellcodeBuffer = _memoryManager.AllocateVirtualMemory(shellcode.Length);
-            
-            _memoryManager.WriteVirtualMemory(shellcodeBuffer, shellcode);
-            
-            // Create a thread to call the shellcode in the remote process
-
-            var ntStatus = RtlCreateUserThread(Process.SafeHandle, IntPtr.Zero, false, 0, IntPtr.Zero, IntPtr.Zero, shellcodeBuffer, IntPtr.Zero, out var threadHandle, IntPtr.Zero);
-            
-            if (ntStatus != NtStatus.Success)
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to create a thread in the remote process");
-            }
-
-            WaitForSingleObject(threadHandle, int.MaxValue);
-            
-            threadHandle.Dispose();
-            
-            _memoryManager.FreeVirtualMemory(shellcodeBuffer);
-            
             try
             {
-                // Read the returned value of the function from the buffer
-
-                return _memoryManager.ReadVirtualMemory<TStructure>(returnBuffer);
+                return Memory.Read<TStructure>(returnBuffer);
             }
 
             finally
             {
-                _memoryManager.FreeVirtualMemory(returnBuffer);
+                Memory.FreeBlock(returnBuffer);
             }
         }
-        
+
         internal IntPtr GetFunctionAddress(string moduleName, string functionName)
         {
-            if (_functionAddressCache.TryGetValue(functionName, out var functionAddress))
-            {
-                return functionAddress;
-            }
-            
-            // Search the module list of the process for the specified module
-            
-            var processModule = Modules.Find(module => module.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
+            var module = Modules.Find(m => m.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
 
-            if (processModule is null)
+            if (module is null)
             {
                 return IntPtr.Zero;
             }
-            
+
             // Calculate the address of the function
 
-            var function = processModule.PeParser.Value.ExportedFunctions.Find(exportedFunction => exportedFunction.Name != null && exportedFunction.Name == functionName);
+            var function = module.PeImage.Value.ExportedFunctions.Find(f => f.Name != null && f.Name == functionName);
 
-            functionAddress = processModule.BaseAddress.AddOffset(function.Offset);
-            
-            // Calculate the start and end address of the export directory
-            
-            var exportDirectory = processModule.PeParser.Value.PeHeaders.PEHeader.ExportTableDirectory;
-            
-            var exportDirectoryStartAddress = processModule.BaseAddress.AddOffset(exportDirectory.RelativeVirtualAddress);
-            
-            var exportDirectoryEndAddress = exportDirectoryStartAddress.AddOffset(exportDirectory.Size);
-            
-            // Check if the function is forwarded to another function
+            var functionAddress = module.BaseAddress + function.Offset;
 
-            if ((ulong) functionAddress < (ulong) exportDirectoryStartAddress || (ulong) functionAddress > (ulong) exportDirectoryEndAddress)
+            // Determine if the function is forwarded to another function
+
+            var exportDirectoryStartAddress = module.BaseAddress + module.PeImage.Value.Headers.PEHeader.ExportTableDirectory.RelativeVirtualAddress;
+
+            var exportDirectoryEndAddress = exportDirectoryStartAddress + module.PeImage.Value.Headers.PEHeader.ExportTableDirectory.Size;
+
+            if ((long) functionAddress < (long) exportDirectoryStartAddress || (long) functionAddress > (long) exportDirectoryEndAddress)
             {
-                _functionAddressCache.Add(functionName, functionAddress);
-                
                 return functionAddress;
             }
-            
+
             // Read the forwarded function
-            
+
             var forwardedFunctionBytes = new List<byte>();
 
             while (true)
             {
-                var currentByte = _memoryManager.ReadVirtualMemory(functionAddress, 1);
+                var currentByte = Memory.Read<byte>(functionAddress);
 
-                if (currentByte[0] == 0x00)
+                if (currentByte == byte.MinValue)
                 {
                     break;
                 }
 
-                forwardedFunctionBytes.Add(currentByte[0]);
+                forwardedFunctionBytes.Add(currentByte);
 
                 functionAddress += 1;
             }
-            
-            var forwardedFunction = Encoding.Default.GetString(forwardedFunctionBytes.ToArray()).Split('.');
+
+            var forwardedFunction = Encoding.ASCII.GetString(forwardedFunctionBytes.ToArray()).Split(".");
 
             return GetFunctionAddress(forwardedFunction[0] + ".dll", forwardedFunction[1]);
         }
 
-        internal IntPtr GetFunctionAddress(string moduleName, ushort? functionOrdinal)
+        internal IntPtr GetFunctionAddress(string moduleName, short functionOrdinal)
         {
-            // Search the module list of the process for the specified module
-            
-            var processModule = Modules.Find(module => module.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
+            var module = Modules.Find(m => m.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
 
-            if (processModule is null)
+            if (module is null)
             {
                 return IntPtr.Zero;
             }
-            
-            // Get the name of the function
-            
-            var function = processModule.PeParser.Value.ExportedFunctions.Find(exportedFunction => exportedFunction.Ordinal == functionOrdinal);
+
+            // Determine the name of the function from its ordinal
+
+            var function = module.PeImage.Value.ExportedFunctions.Find(f => f.Ordinal == functionOrdinal);
 
             return GetFunctionAddress(moduleName, function.Name);
         }
-        
-        internal IEnumerable<PebEntry> GetPebEntries()
+
+        internal Dictionary<IntPtr, LdrDataTableEntry<long>> ReadPebEntries()
         {
-            if (IsWow64)
+            var entries = new Dictionary<IntPtr, LdrDataTableEntry<long>>();
+
+            // Read the loader data of the PEB
+
+            var pebLoaderData = Memory.Read<PebLdrEntry<long>>(Peb.LoaderAddress);
+
+            // Read the entries of the InMemoryOrder (circular) doubly linked list
+
+            var currentEntryAddress = pebLoaderData.InMemoryOrderModuleList.Flink;
+
+            var inMemoryOrderLinksOffset = Marshal.OffsetOf<LdrDataTableEntry<long>>("InMemoryOrderLinks");
+
+            while (true)
             {
-                // Read the loader data of the WOW64 PEB
+                // Read the current entry
 
-                var pebLoaderData = _memoryManager.ReadVirtualMemory<PebLdrData32>(Peb.LoaderAddress);
+                var entryAddress = currentEntryAddress - (int) inMemoryOrderLinksOffset;
 
-                var currentPebEntryAddress = pebLoaderData.InLoadOrderModuleList.Flink;
+                var entry = Memory.Read<LdrDataTableEntry<long>>((IntPtr) entryAddress);
 
-                while (true)
+                entries.Add((IntPtr) entryAddress, entry);
+
+                if (currentEntryAddress == pebLoaderData.InMemoryOrderModuleList.Blink)
                 {
-                    // Read the current entry from the InLoadOrder linked list
-
-                    var loaderEntry = _memoryManager.ReadVirtualMemory<LdrDataTableEntry32>((IntPtr) currentPebEntryAddress);
-
-                    yield return new PebEntry(loaderEntry);
-
-                    if (currentPebEntryAddress == pebLoaderData.InLoadOrderModuleList.Blink)
-                    {
-                        break;
-                    }
-
-                    // Get the address of the next entry in the InLoadOrder linked list
-
-                    currentPebEntryAddress = loaderEntry.InLoadOrderLinks.Flink;
+                    break;
                 }
+
+                // Determine the address of the next entry
+
+                currentEntryAddress = entry.InMemoryOrderLinks.Flink;
             }
 
-            else
-            {
-                // Read the loader data of the PEB
-            
-                var pebLoaderData = _memoryManager.ReadVirtualMemory<PebLdrData64>(Peb.LoaderAddress);
-
-                var currentPebEntryAddress = pebLoaderData.InLoadOrderModuleList.Flink;
-
-                while (true)
-                {
-                    // Read the current entry from the InLoadOrder linked list
-
-                    var loaderEntry = _memoryManager.ReadVirtualMemory<LdrDataTableEntry64>((IntPtr) currentPebEntryAddress);
-
-                    yield return new PebEntry(loaderEntry);
-
-                    if (currentPebEntryAddress == pebLoaderData.InLoadOrderModuleList.Blink)
-                    {
-                        break;
-                    }
-
-                    // Get the address of the next entry in the InLoadOrder linked list
-
-                    currentPebEntryAddress = loaderEntry.InLoadOrderLinks.Flink;
-                }
-            }
+            return entries;
         }
-        
-        internal IntPtr GetSymbolAddress(string symbolName)
+
+        internal Dictionary<IntPtr, LdrDataTableEntry<int>> ReadWow64PebEntries()
         {
-            var pdbSymbol = _pdbParser.Value.PdbSymbols.Find(symbol => symbol.Name == symbolName);
-            
-            // Get the section that the symbol resides in
+            var entries = new Dictionary<IntPtr, LdrDataTableEntry<int>>();
 
-            var symbolSection = _pdbParser.Value.Module.PeParser.Value.PeHeaders.SectionHeaders[(int) pdbSymbol.Section - 1];
-            
-            // Calculate the address of the symbol
+            // Read the loader data of the PEB
 
-            return _pdbParser.Value.Module.BaseAddress.AddOffset(symbolSection.VirtualAddress + pdbSymbol.Offset);
+            var pebLoaderData = Memory.Read<PebLdrEntry<int>>(Peb.LoaderAddress);
+
+            // Read the entries of the InMemoryOrder (circular) doubly linked list
+
+            var currentEntryAddress = pebLoaderData.InMemoryOrderModuleList.Flink;
+
+            var inMemoryOrderLinksOffset = Marshal.OffsetOf<LdrDataTableEntry<int>>("InMemoryOrderLinks");
+
+            while (true)
+            {
+                // Read the current entry
+
+                var entryAddress = currentEntryAddress - (int) inMemoryOrderLinksOffset;
+
+                var entry = Memory.Read<LdrDataTableEntry<int>>((IntPtr) entryAddress);
+
+                entries.Add((IntPtr) entryAddress, entry);
+
+                if (currentEntryAddress == pebLoaderData.InMemoryOrderModuleList.Blink)
+                {
+                    break;
+                }
+
+                // Determine the address of the next entry
+
+                currentEntryAddress = entry.InMemoryOrderLinks.Flink;
+            }
+
+            return entries;
         }
-        
+
         internal void Refresh()
         {
             Modules.Clear();
-            
+
             Modules.AddRange(GetModules());
-            
+
             Process.Refresh();
         }
-        
-        private void EnableDebuggerPrivileges()
+
+        private static void EnableDebuggerPrivileges()
         {
             try
             {
@@ -321,140 +241,111 @@ namespace Bleak.RemoteProcess
                 // The local process isn't running in administrator mode
             }
         }
-        
+
         private List<Module> GetModules()
         {
             var modules = new List<Module>();
 
-            var filePathRegex = new Regex("System32", RegexOptions.IgnoreCase);
-            
-            foreach (var pebEntry in GetPebEntries())
+            if (IsWow64)
             {
-                if (!Environment.Is64BitProcess || IsWow64)
+                var filePathRegex = new Regex("System32", RegexOptions.IgnoreCase);
+
+                foreach (var entry in ReadWow64PebEntries().Values)
                 {
-                    var loaderEntry = (LdrDataTableEntry32) pebEntry.LoaderEntry;
-                    
                     // Read the file path of the entry
 
-                    var entryFilePathBytes = _memoryManager.ReadVirtualMemory((IntPtr) loaderEntry.FullDllName.Buffer, loaderEntry.FullDllName.Length);
+                    var entryFilePathBytes = Memory.ReadBlock((IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
 
                     var entryFilePath = filePathRegex.Replace(Encoding.Unicode.GetString(entryFilePathBytes), "SysWOW64");
 
                     // Read the name of the entry
 
-                    var entryNameBytes = _memoryManager.ReadVirtualMemory((IntPtr) loaderEntry.BaseDllName.Buffer, loaderEntry.BaseDllName.Length);
+                    var entryNameBytes = Memory.ReadBlock((IntPtr) entry.BaseDllName.Buffer, entry.BaseDllName.Length);
 
                     var entryName = Encoding.Unicode.GetString(entryNameBytes);
 
-                    modules.Add(new Module((IntPtr) loaderEntry.DllBase, entryFilePath, entryName));
+                    modules.Add(new Module((IntPtr) entry.DllBase, entryFilePath, entryName));
                 }
+            }
 
-                else
+            else
+            {
+                foreach (var entry in ReadPebEntries().Values)
                 {
-                    var loaderEntry = (LdrDataTableEntry64) pebEntry.LoaderEntry;
-                    
                     // Read the file path of the entry
 
-                    var entryFilePathBytes = _memoryManager.ReadVirtualMemory((IntPtr) loaderEntry.FullDllName.Buffer, loaderEntry.FullDllName.Length);
+                    var entryFilePathBytes = Memory.ReadBlock((IntPtr) entry.FullDllName.Buffer, entry.FullDllName.Length);
 
                     var entryFilePath = Encoding.Unicode.GetString(entryFilePathBytes);
 
                     // Read the name of the entry
 
-                    var entryNameBytes = _memoryManager.ReadVirtualMemory((IntPtr) loaderEntry.BaseDllName.Buffer, loaderEntry.BaseDllName.Length);
+                    var entryNameBytes = Memory.ReadBlock((IntPtr) entry.BaseDllName.Buffer, entry.BaseDllName.Length);
 
                     var entryName = Encoding.Unicode.GetString(entryNameBytes);
 
-                    modules.Add(new Module((IntPtr) loaderEntry.DllBase, entryFilePath, entryName));
+                    modules.Add(new Module((IntPtr) entry.DllBase, entryFilePath, entryName));
                 }
             }
 
             return modules;
         }
-        
-        private Peb GetPeb()
+
+        private bool GetProcessArchitecture()
+        {
+            if (!Kernel32.IsWow64Process(Process.SafeHandle, out var isWow64Process))
+            {
+                throw new Win32Exception($"Failed to call IsWow64Process with error code {Marshal.GetLastWin32Error()}");
+            }
+
+            return isWow64Process;
+        }
+
+        private Peb ReadPeb()
         {
             if (IsWow64)
             {
-                // Query the remote process for the address of the WOW64 PEB
+                // Query the process for the address of its WOW64 PEB
 
-                var pebAddressBuffer = Marshal.AllocHGlobal(sizeof(ulong));
+                var wow64PebAddressBuffer = new byte[sizeof(long)];
 
-                if (NtQueryInformationProcess(Process.SafeHandle, ProcessInformationClass.Wow64Information, pebAddressBuffer, sizeof(ulong), IntPtr.Zero) != NtStatus.Success)
+                var ntStatus = Ntdll.NtQueryInformationProcess(Process.SafeHandle, ProcessInformationClass.Wow64Information, ref wow64PebAddressBuffer[0], wow64PebAddressBuffer.Length, out var returnLength);
+
+                if (ntStatus != NtStatus.Success || returnLength != wow64PebAddressBuffer.Length)
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to query the remote process for the address of the WOW64 PEB");
+                    throw new Win32Exception($"Failed to call NtQueryInformationProcess with error code {ntStatus}");
                 }
-                
-                var pebAddress = Marshal.PtrToStructure<ulong>(pebAddressBuffer);
 
-                Marshal.FreeHGlobal(pebAddressBuffer);
+                var wow64PebAddress = Unsafe.ReadUnaligned<IntPtr>(ref wow64PebAddressBuffer[0]);
 
-                // Read the WOW64 PEB of the remote process
+                // Read the WOW64 PEB
 
-                var peb = _memoryManager.ReadVirtualMemory<Peb32>((IntPtr) pebAddress);
+                var wow64Peb = Memory.Read<Peb<int>>(wow64PebAddress);
 
-                return new Peb((IntPtr) peb.ApiSetMap, (IntPtr) peb.Ldr);
+                return new Peb((IntPtr) wow64Peb.ApiSetMap, (IntPtr) wow64Peb.Ldr);
             }
 
             else
             {
-                // Query the remote process for its basic information
+                // Query the process for the address of its PEB
 
-                var basicInformationSize = Marshal.SizeOf<ProcessBasicInformation>();
+                var processBasicInformationBuffer = new byte[Unsafe.SizeOf<ProcessBasicInformation>()];
 
-                var basicInformationBuffer = Marshal.AllocHGlobal(basicInformationSize);
+                var ntStatus = Ntdll.NtQueryInformationProcess(Process.SafeHandle, ProcessInformationClass.BasicInformation, ref processBasicInformationBuffer[0], processBasicInformationBuffer.Length, out var returnLength);
 
-                if (NtQueryInformationProcess(Process.SafeHandle, ProcessInformationClass.BasicInformation, basicInformationBuffer, basicInformationSize, IntPtr.Zero) != NtStatus.Success)
+                if (ntStatus != NtStatus.Success || returnLength != processBasicInformationBuffer.Length)
                 {
-                    ExceptionHandler.ThrowWin32Exception("Failed to query the remote process for its basic information");
+                    throw new Win32Exception($"Failed to call NtQueryInformationProcess with error code {ntStatus}");
                 }
 
-                var basicInformation = Marshal.PtrToStructure<ProcessBasicInformation>(basicInformationBuffer);
+                var pebAddress = Unsafe.ReadUnaligned<ProcessBasicInformation>(ref processBasicInformationBuffer[0]).PebBaseAddress;
 
-                Marshal.FreeHGlobal(basicInformationBuffer);
+                // Read the PEB
 
-                // Read the PEB of the remote process
-
-                var peb = _memoryManager.ReadVirtualMemory<Peb64>(basicInformation.PebBaseAddress);
+                var peb = Memory.Read<Peb<long>>(pebAddress);
 
                 return new Peb((IntPtr) peb.ApiSetMap, (IntPtr) peb.Ldr);
             }
-        }
-        
-        private Process GetProcess(int processId)
-        {
-            try
-            {
-                return Process.GetProcessById(processId);
-            }
-
-            catch (ArgumentException)
-            {
-                throw new ArgumentException($"No process with the id {processId} is currently running");
-            }
-        }
-        
-        private Process GetProcess(string processName)
-        {
-            try
-            {
-                return Process.GetProcessesByName(processName)[0];
-            }
-
-            catch (IndexOutOfRangeException)
-            {
-                throw new ArgumentException($"No process with the name {processName} is currently running");
-            }
-        }
-        
-        private bool IsProcessWow64()
-        {
-            if (!IsWow64Process(Process.SafeHandle, out var isWow64Process))
-            {
-                ExceptionHandler.ThrowWin32Exception("Failed to determine whether the remote process was running under WOW64");
-            }
-
-            return isWow64Process;
         }
     }
 }

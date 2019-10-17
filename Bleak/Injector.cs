@@ -1,174 +1,216 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using Bleak.Injection;
-using Bleak.Shared.Handlers;
-using Bleak.Tools;
+using Bleak.Injection.Methods;
 
 namespace Bleak
 {
     /// <summary>
-    /// Initialises an injector capable of injecting a DLL into a specified remote process
+    /// Provides the ability to inject a DLL into a process
     /// </summary>
-    public class Injector : IDisposable
+    public sealed class Injector : IDisposable
     {
-        private readonly InjectionManager _injectionManager;
-        
-        /// <summary>
-        /// Initialises an injector capable of injecting a DLL into a specified remote process
-        /// </summary>
-        public Injector(InjectionMethod injectionMethod, int processId, byte[] dllBytes)
-        {
-            // Ensure the users operating system is valid
+        private bool _injected;
 
-            ValidationHandler.ValidateOperatingSystem();
-            
-            // Ensure the arguments passed in are valid
-
-            if (processId <= 0 || dllBytes is null || dllBytes.Length == 0)
-            {
-                throw new ArgumentException("One or more of the arguments provided were invalid");
-            }
-            
-            _injectionManager = injectionMethod == InjectionMethod.Manual
-                              ? new InjectionManager(injectionMethod, processId, dllBytes)
-                              : new InjectionManager(injectionMethod, processId, DllTools.CreateTemporaryDll(dllBytes));
-        }
+        private readonly InjectionBase _injectionBase;
 
         /// <summary>
-        /// Initialises an injector capable of injecting a DLL into a specified remote process
+        /// Provides the ability to inject a DLL into a process
         /// </summary>
-        public Injector(InjectionMethod injectionMethod, int processId, string dllPath, bool randomiseDllName = false)
+        public Injector(int processId, byte[] dllBytes, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
         {
-            // Ensure the users operating system is valid
-
-            ValidationHandler.ValidateOperatingSystem();
-            
-            // Ensure the arguments passed in are valid
-
-            if (processId <= 0 || string.IsNullOrWhiteSpace(dllPath))
+            if (injectionMethod == InjectionMethod.ManualMap)
             {
-                throw new ArgumentException("One or more of the arguments provided were invalid");
-            }
-            
-            // Ensure a valid DLL exists at the provided path
-
-            if (!File.Exists(dllPath) || Path.GetExtension(dllPath) != ".dll")
-            {
-                throw new ArgumentException("No DLL exists at the provided path");
-            }
-            
-            if (randomiseDllName)
-            {
-                // Create a temporary DLL on disk
-
-                var temporaryDllPath = DllTools.CreateTemporaryDll(File.ReadAllBytes(dllPath));
-
-                _injectionManager = new InjectionManager(injectionMethod, processId, temporaryDllPath);
-            }
-            
-            else
-            {
-                _injectionManager = new InjectionManager(injectionMethod, processId, dllPath);
-            }
-        }
-
-        /// <summary>
-        /// Initialises an injector capable of injecting a DLL into a specified remote process
-        /// </summary>
-        public Injector(InjectionMethod injectionMethod, string processName, byte[] dllBytes)
-        {
-            // Ensure the users operating system is valid
-
-            ValidationHandler.ValidateOperatingSystem();
-
-            // Ensure the arguments passed in are valid
-
-            if (string.IsNullOrWhiteSpace(processName) || dllBytes is null || dllBytes.Length == 0)
-            {
-                throw new ArgumentException("One or more of the arguments provided were invalid");
+                _injectionBase = new ManualMap(dllBytes, GetProcess(processId), injectionMethod, injectionFlags);
             }
 
-            _injectionManager = injectionMethod == InjectionMethod.Manual
-                              ? new InjectionManager(injectionMethod, processName, dllBytes)
-                              : new InjectionManager(injectionMethod, processName, DllTools.CreateTemporaryDll(dllBytes));
-        }
-
-        /// <summary>
-        /// Initialises an injector capable of injecting a DLL into a specified remote process
-        /// </summary>
-        public Injector(InjectionMethod injectionMethod, string processName, string dllPath, bool randomiseDllName = false)
-        {
-            // Ensure the users operating system is valid
-
-            ValidationHandler.ValidateOperatingSystem();
-
-            // Ensure the arguments passed in are valid
-
-            if (string.IsNullOrWhiteSpace(processName) || string.IsNullOrWhiteSpace(dllPath))
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
             {
-                throw new ArgumentException("One or more of the arguments provided were invalid");
-            }
-
-            // Ensure a valid DLL exists at the provided path
-
-            if (!File.Exists(dllPath) || Path.GetExtension(dllPath) != ".dll")
-            {
-                throw new ArgumentException("No DLL exists at the provided path");
-            }
-
-            if (randomiseDllName)
-            {
-                // Create a temporary DLL on disk
-
-                var temporaryDllPath = DllTools.CreateTemporaryDll(File.ReadAllBytes(dllPath));
-
-                _injectionManager = new InjectionManager(injectionMethod, processName, temporaryDllPath);
+                _injectionBase = new LdrLoadDll(CreateTemporaryDll(dllBytes), GetProcess(processId), injectionMethod, injectionFlags);
             }
 
             else
             {
-                _injectionManager = new InjectionManager(injectionMethod, processName, dllPath);
+                throw new ArgumentException("The injection method provided was invalid");
             }
         }
 
         /// <summary>
-        /// Frees the unmanaged resources used by the instance
+        /// Provides the ability to inject a DLL into a process
+        /// </summary>
+        public Injector(int processId, string dllPath, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
+        {
+            if (injectionFlags.HasFlag(InjectionFlags.RandomiseDllName))
+            {
+                dllPath = CreateTemporaryDll(File.ReadAllBytes(dllPath));
+            }
+
+            if (injectionMethod == InjectionMethod.ManualMap)
+            {
+                _injectionBase = new ManualMap(dllPath, GetProcess(processId), injectionMethod, injectionFlags);
+            }
+
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
+            {
+                _injectionBase = new LdrLoadDll(dllPath, GetProcess(processId), injectionMethod, injectionFlags);
+            }
+
+            else
+            {
+                throw new ArgumentException("The injection method provided was invalid");
+            }
+        }
+
+        /// <summary>
+        /// Provides the ability to inject a DLL into a process
+        /// </summary>
+        public Injector(string processName, byte[] dllBytes, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
+        {
+            if (injectionMethod == InjectionMethod.ManualMap)
+            {
+                _injectionBase = new ManualMap(dllBytes, GetProcess(processName), injectionMethod, injectionFlags);
+            }
+
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
+            {
+                _injectionBase = new LdrLoadDll(CreateTemporaryDll(dllBytes), GetProcess(processName), injectionMethod, injectionFlags);
+            }
+
+            else
+            {
+                throw new ArgumentException("The injection method provided was invalid");
+            }
+        }
+
+        /// <summary>
+        /// Provides the ability to inject a DLL into a process
+        /// </summary>
+        public Injector(string processName, string dllPath, InjectionMethod injectionMethod, InjectionFlags injectionFlags = InjectionFlags.None)
+        {
+            if (injectionFlags.HasFlag(InjectionFlags.RandomiseDllName))
+            {
+                dllPath = CreateTemporaryDll(File.ReadAllBytes(dllPath));
+            }
+
+            if (injectionMethod == InjectionMethod.ManualMap)
+            {
+                _injectionBase = new ManualMap(dllPath, GetProcess(processName), injectionMethod, injectionFlags);
+            }
+
+            else if (injectionMethod == InjectionMethod.CreateThread || injectionMethod == InjectionMethod.HijackThread)
+            {
+                _injectionBase = new LdrLoadDll(dllPath, GetProcess(processName), injectionMethod, injectionFlags);
+            }
+
+            else
+            {
+                throw new ArgumentException("The injection method provided was invalid");
+            }
+        }
+
+        /// <summary>
+        /// Frees the unmanaged resources used by this class
         /// </summary>
         public void Dispose()
         {
-            _injectionManager.Dispose();
-        }
-        
-        /// <summary>
-        /// Ejects the DLL from the remote process
-        /// </summary>
-        public bool EjectDll()
-        {
-            return _injectionManager.EjectDll();
+            _injectionBase.Dispose();
         }
 
         /// <summary>
-        /// Removes the DLL reference from several structures in the remote processes PEB
+        /// Ejects the injected DLL from the process
         /// </summary>
-        public bool HideDllFromPeb()
+        public void EjectDll()
         {
-            return _injectionManager.HideDllFromPeb();
+            if (!_injected)
+            {
+                return;
+            }
+
+            _injectionBase.Eject();
+
+            _injected = false;
         }
 
         /// <summary>
-        /// Injects the DLL into the remote process using the specified method of injection
+        /// Injects the DLL into the process
         /// </summary>
         public IntPtr InjectDll()
         {
-            return _injectionManager.InjectDll();
+            if (_injected)
+            {
+                return _injectionBase.DllBaseAddress;
+            }
+
+            _injectionBase.Inject();
+
+            _injected = true;
+
+            return _injectionBase.DllBaseAddress;
         }
 
-        /// <summary>
-        /// Writes over the header region of the DLL loaded in the remote process with random bytes
-        /// </summary>
-        public bool RandomiseDllHeaders()
+        private static string CreateTemporaryDll(byte[] dllBytes)
         {
-            return _injectionManager.RandomiseDllHeaders();
+            // Ensure a directory exists on disk to store the temporary DLL
+
+            var temporaryDirectoryInfo = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Bleak", "DLL"));
+
+            // Clear the directory
+
+            foreach (var file in temporaryDirectoryInfo.EnumerateFiles())
+            {
+                try
+                {
+                    file.Delete();
+                }
+
+                catch (Exception)
+                {
+                    // The file is currently open and cannot be safely deleted
+                }
+            }
+
+            // Create a temporary DLL with a randomised name
+
+            var temporaryDllPath = Path.Combine(temporaryDirectoryInfo.FullName, Path.GetRandomFileName() + ".dll");
+
+            try
+            {
+                File.WriteAllBytes(temporaryDllPath, dllBytes);
+            }
+
+            catch (IOException)
+            {
+                // A DLL already exists with the specified name, is loaded in a process and cannot be safely overwritten
+            }
+
+            return temporaryDllPath;
+        }
+
+        private static Process GetProcess(int processId)
+        {
+            try
+            {
+                return Process.GetProcessById(processId);
+            }
+
+            catch (ArgumentException)
+            {
+                throw new ArgumentException($"No process with the ID {processId} is currently running");
+            }
+        }
+
+        private static Process GetProcess(string processName)
+        {
+            try
+            {
+                return Process.GetProcessesByName(processName)[0];
+            }
+
+            catch (IndexOutOfRangeException)
+            {
+                throw new ArgumentException($"No process with the name {processName} is currently running");
+            }
         }
     }
 }

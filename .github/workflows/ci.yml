@@ -1,0 +1,14 @@
+name: Continuous Integration
+
+on: push
+
+jobs:
+  pipeline:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository 
+        uses: actions/checkout@v1
+        
+      - name: Build
+        run: dotnet build --configuration Release
