@@ -1,34 +1,12 @@
 ## Bleak 
 
-## Note as of 16/11/2019
+## Note as of 23/12/2019
 
-This library will become deprecated sometime in the near future.
+This library has been deprecated and is no longer being maintained.
 
-I am currently developing a new library which alongside new features and better resource usage will adhere to very clear standards which will be mentioned shortly. When I started on Bleak I had no experience working on large public projects and made some very poor mistakes in the development cycle (such as changing and even flat out removing parts of the public interface.)
+I have re writen an alternative library, that is in my opinion much better. 
 
-This leads me to the new projects, which will support the following
-
-- A standardised public interface that will NOT change between release versions (aside from potenital new methods)
-
-- Written to always officially support the latest version of Windows (I will therefore not create support for old versions of Windows)
-
-- Optimise the usage of resources in both local and remote process to provide a lightweight dll loading library
-
-- Always use the latest .NET API's to ensure best performance
-
-- Embrace new design guidelines that the .Net team is using for .Net Core 3+ (which ofcourse includes the nullable context)
-
-In terms of features, I have decided to remove loading using LoadLibrary (or in the case of this library LdrLoadDll) and only offer manual mapping. This means I can focus more on providing a proper alternative to the Windows loader. The new features coming to manual mapping that I am (hoping) to do are the following
-
-- Security cookie initialisation
-
-- Useage of activation contexts when calling initialisation routines (entry point calls to TLS callbacks and Dll main)
-
-- Static TLS
-
-A big maybe here, but I may at some point offer the functionality to add a reference to the loader structures for DLL's that are being mapped from disk (not really feasible to do from memory as a lot of the structures require references to a DLL path + DLL name, which obviously don't exist if you are loading from memory.) Still need to do more research / reverse engineering of the loader to determine if there are more structures I need to add references so it is definately something for the future.
-
-I am hoping to have this new project finished by early 2020.
+[Link to new library](https://github.com/Dewera/Lunar)
 
 ![](https://github.com/Akaion/Bleak/workflows/Continuous%20Integration/badge.svg)
 
